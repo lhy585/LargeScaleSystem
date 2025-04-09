@@ -28,9 +28,41 @@ public class ZooKeeperUtils implements Watcher{
 			System.out.println("Watch received event");
 			countDownLatch.countDown();
 		}
+//		System.out.println(event);
+		if(event.getType() == Event.EventType.NodeChildrenChanged){
+			System.out.println("Detected a client has created: " + event.getPath());
+			try{
+				this.setWatch(event.getPath());
+				List<String>regions= getChildren(event.getPath());
+				for(int i=0;i<regions.size();i++){
+					System.out.println("set watch path is "+event.getPath()+"/"+regions.get(i)+"/exist");
+					setWatch(event.getPath()+"/"+regions.get(i)+"/exist");
+				}
+			}
+			catch(Exception e){
+				e.printStackTrace();
+			}
+			//TODO:在此处调用master的处理新注册的regionserver的函数
+			//当前所有的regionserver为List<String>regions，仅记录regionserver的ip
+		}
+		if(event.getType() == Event.EventType.NodeDeleted){
+			String ip=event.getPath();
+			ip=ip.substring(ip.indexOf('/')+1);
+			ip=ip.substring(ip.indexOf('/')+1);
+			ip=ip.substring(ip.indexOf('/')+1);
+			ip=ip.substring(0,ip.indexOf('/'));
+			System.out.println("Detected a client has disconnected: " + ip);
+			//TODO:在此处调用master的处理regionserver掉线的函数
+			//掉线的region为ip
+
+			try{
+				deleteNodeRecursively("/lss/region_server/"+ip);
+			}
+			catch (Exception e){
+				e.printStackTrace();
+			}
+		}
 	}
-
-
 
 
 	/**连接zookeeper
@@ -52,7 +84,9 @@ public class ZooKeeperUtils implements Watcher{
 	public String createNode(String path,String data) throws Exception{
 		return this.zookeeper.create(path, data.getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 	}
-
+	public String createTempNode(String path,String data) throws Exception{
+		return this.zookeeper.create(path,data.getBytes(),Ids.OPEN_ACL_UNSAFE,CreateMode.EPHEMERAL);
+	}
 	/**
 	 * 获取路径下所有子节点
 	 * @param path
@@ -63,6 +97,11 @@ public class ZooKeeperUtils implements Watcher{
 	public List<String> getChildren(String path) throws KeeperException, InterruptedException{
 		List<String> children = zookeeper.getChildren(path, false);
 		return children;
+	}
+
+	public void setWatch(String path) throws Exception{
+		zookeeper.getChildren(path,true);
+		return;
 	}
 
 	/**
@@ -102,7 +141,19 @@ public class ZooKeeperUtils implements Watcher{
 	public void deleteNode(String path) throws InterruptedException, KeeperException{
 		zookeeper.delete(path, -1);
 	}
+	public void deleteNodeRecursively(String path) throws Exception {
+		// 获取当前节点的所有子节点
+		List<String> children = zookeeper.getChildren(path,false);
 
+		// 递归删除所有子节点
+		for (String child : children) {
+			deleteNodeRecursively(path + "/" + child);  // 删除子节点
+		}
+
+		// 删除当前节点
+		zookeeper.delete(path,-1);
+//		System.out.println("Deleted node: " + path);
+	}
 	/**
 	 * 获取创建时间
 	 * @param path
