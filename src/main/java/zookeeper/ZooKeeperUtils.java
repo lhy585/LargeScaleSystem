@@ -44,6 +44,7 @@ public class ZooKeeperUtils implements Watcher{
 			}
 			//TODO:在此处调用master的处理新注册的regionserver的函数
 			//当前所有的regionserver为List<String>regions，仅记录regionserver的ip
+
 		}
 		if(event.getType() == Event.EventType.NodeDeleted){
 			String ip=event.getPath();

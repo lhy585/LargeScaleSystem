@@ -45,6 +45,20 @@ public class ZooKeeperManager {
     }
 
     public String getRegionServer(String table_name){
+        try{
+            List<String> server=zooKeeperUtils.getChildren("/lss/region_server");
+            for(int i=0;i<server.size();i++){
+                List<String> tables=zooKeeperUtils.getChildren("/lss/region_server/"+server.get(i)+"/table");
+                for(int j=0;j<tables.size();j++){
+                    if(table_name.equals(tables.get(j))){
+                        return server.get(i);
+                    }
+                }
+            }
+        }
+        catch (Exception e){
+            e.printStackTrace();
+        }
         return null;
     }
     public boolean deleteRegionServer(String ip){

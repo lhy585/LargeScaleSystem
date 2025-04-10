@@ -12,8 +12,11 @@ public class App {
         try{
 //            System.out.println(zookeeper.getData("/lss/master/ip"));
             TableInform tableInform=new TableInform("table1",0);
+            TableInform tableInform2=new TableInform("table2",0);
             List<TableInform> tableInforms=new ArrayList<>();
+            List<TableInform> tableInforms2=new ArrayList<>();
             tableInforms.add(tableInform);
+            tableInforms2.add(tableInform2);
             ZooKeeperManager master = new ZooKeeperManager(); //master
             master.setWatch("/lss/region_server");
             System.out.println("client1 connected");
@@ -21,10 +24,12 @@ public class App {
             zooKeeperManager.addRegionServer("1.1.1.1","2182",tableInforms,"123","123","1234","1234");
             System.out.println("client2 connected");
             ZooKeeperManager zooKeeperManager1 = new ZooKeeperManager(); //client
-            zooKeeperManager1.addRegionServer("1.1.1.2","2182",tableInforms,"123","123","1234","1234");
+            zooKeeperManager1.addRegionServer("1.1.1.2","2182",tableInforms2,"123","123","1234","1234");
             System.out.println(111);
+            System.out.println("table1 is at server ip = "+master.getRegionServer("table1"));
+            System.out.println("table2 is at server ip = "+master.getRegionServer("table2"));
             System.out.println("client2 disconnected");
-            zooKeeperManager1.close();
+//            zooKeeperManager1.close();
 //            zooKeeperManager.close();
             while(true){
 
