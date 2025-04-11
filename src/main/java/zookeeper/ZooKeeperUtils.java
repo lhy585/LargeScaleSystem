@@ -11,8 +11,6 @@ import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 
-
-
 public class ZooKeeperUtils implements Watcher{
 
 	private ZooKeeper zookeeper;
@@ -65,36 +63,29 @@ public class ZooKeeperUtils implements Watcher{
 		}
 	}
 
-
-	/**连接zookeeper
-	 * @param host
-	 * @throws Exception
-	 */
+	/**
+	 * 连接Zookeeper
+     */
 	public void connectZookeeper(String host) throws Exception{
 		zookeeper = new ZooKeeper(host, SESSION_TIME_OUT, this);
 		countDownLatch.await();
-		System.out.println("zookeeper connection success");
+		System.out.println("[Info]Zookeeper connection success.");
 	}
 
 	/**
 	 * 创建节点
-	 * @param path
-	 * @param data
-	 * @throws Exception
-	 */
+     */
 	public String createNode(String path,String data) throws Exception{
 		return this.zookeeper.create(path, data.getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 	}
+
 	public String createTempNode(String path,String data) throws Exception{
 		return this.zookeeper.create(path,data.getBytes(),Ids.OPEN_ACL_UNSAFE,CreateMode.EPHEMERAL);
 	}
+
 	/**
 	 * 获取路径下所有子节点
-	 * @param path
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
-	 */
+     */
 	public List<String> getChildren(String path) throws KeeperException, InterruptedException{
 		List<String> children = zookeeper.getChildren(path, false);
 		return children;
@@ -102,16 +93,11 @@ public class ZooKeeperUtils implements Watcher{
 
 	public void setWatch(String path) throws Exception{
 		zookeeper.getChildren(path,true);
-		return;
 	}
 
 	/**
 	 * 获取节点上面的数据
-	 * @param path  路径
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
-	 */
+     */
 	public String getData(String path) throws KeeperException, InterruptedException{
 		byte[] data = zookeeper.getData(path, false, null);
 		if (data == null) {
