@@ -19,7 +19,23 @@ public class ZooKeeperUtils implements Watcher{
 	 */
 	private static final int SESSION_TIME_OUT = 2000;
 	private CountDownLatch countDownLatch = new CountDownLatch(1);
-
+	
+	// 构造ZooKeeperUtils对象的时候初始化连接
+	public ZooKeeperUtils(String host) {
+		try {
+			connectZookeeper(host);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	public ZooKeeperUtils() {
+		try {
+			connectZookeeper("localhost:2181");
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
 	@Override
 	public void process(WatchedEvent event) {
 		if (event.getState() == KeeperState.SyncConnected) {
