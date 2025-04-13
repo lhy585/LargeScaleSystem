@@ -12,10 +12,10 @@ import javax.net.ServerSocketFactory;
 
 import java.io.IOException;
 import java.net.*;
-import java.io.BufferedReader;
-import java.io.PrintWriter;
 
 import zookeeper.ZooKeeperUtils;
+
+
 import org.apache.curator.framework.CuratorFramework;
 
 class TableInfo {
@@ -27,15 +27,14 @@ class TableInfo {
     public String slavePwd;
     public String slaveSqlPort;
 
-    TableInfo(String tableName) {
+    TableInfo(String tableName){
         this.slave = false;
         this.tableName = tableName;
         this.slaveUsr = "root";
         this.slavePwd = "123";
         this.slaveSqlPort = "3306";
     }
-
-    public void setSlave(String ip, String port) {
+    public void setSlave(String ip, String port){
         this.slave = true;
         this.slaveIp = ip;
         this.slavePort = port;
@@ -48,15 +47,18 @@ public class RegionServer {
     public static String mysqlUser;
     public static String mysqlPwd;
 
+    //    public static CuratorFramework client = null;
     public static Connection connection = null;
     public static Statement statement = null;
+
+    public static ServerSocket serverSocket = null;
+    public static ThreadPoolExecutor threadPoolExecutor = null;
 
     public static Boolean quitSignal = false;
     public static ArrayList<TableInfo> tables;
 
     public static String serverPath;
     public static String serverValue;
-    public static ZooKeeperUtils zooKeeperUtils;
 
     static {
         ip = getIPAddress();
@@ -66,44 +68,42 @@ public class RegionServer {
         tables = new ArrayList<>();
     }
 
-    public static void main(String[] args) throws Exception {
-        System.out.println("[Info] Region Server is initializing...");
-        initRegionServer(); // 初始化
-        System.out.println("[Info] Initializing successfully!");
+    RegionServer() {
 
-        // Start listener threads
-        new ClientListenerThread(Integer.parseInt(port)).start(); // 启动监听线程
-        new MasterListenerThread(Integer.parseInt(port) + 1).start();
     }
-
-    public static void initRegionServer() throws Exception {
-        zooKeeperUtils.connectZookeeper("localhost:2181");
-        connection = JdbcUtils.getConnection(mysqlUser, mysqlPwd);
+    public static ZooKeeperUtils initRegionServer() {
+        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
+        System.out.println("init region server");
+        connection = JdbcUtils.getConnection("root", "040517cc");
         try {
             assert connection != null;
             statement = connection.createStatement();
         } catch (SQLException e) {
-            System.out.println("[Error] SQL Exception: " + e.getMessage());
+            System.out.println(e);
         }
+        System.out.println("clear mysql data");
         clearMysqlData();
+        System.out.println("create zookeeper node");
         createZooKeeperNode(zooKeeperUtils);
+        System.out.println("create socket and thread pool");
+        createSocketAndThreadPool();
+        return zooKeeperUtils;
     }
-
     public static void clearMysqlData() {
         if (connection != null && statement != null) {
             try {
-                // Delete existing database
+                // 删除已有数据库
                 String deleteDB = "drop database if exists lss";
                 statement.execute(deleteDB);
-                // Recreate database
+                // 重新创建数据库
                 String createDB = "create database if not exists lss";
                 statement.execute(createDB);
 
-                // Use the newly created database
+                // 使用新创建的数据库
                 String useDB = "use lss";
                 statement.execute(useDB);
-            } catch (Exception e) {
-                System.out.println("[Error] Failed to clear MySQL data: " + e.getMessage());
+            } catch(Exception e) {
+                System.out.println(e);
             }
         }
     }
@@ -125,142 +125,85 @@ public class RegionServer {
 
             zooKeeperUtils.createNode(serverPath, serverValue);
 
-        } catch (Exception e) {
-            System.out.println("[Error] Failed to create ZooKeeper node: " + e.getMessage());
+        } catch(Exception e) {
+            System.out.println(e);
         }
     }
 
-    public static String getIPAddress() {
+    public static void createSocketAndThreadPool(){
+        ServerSocketFactory serverSocketFactory  = ServerSocketFactory.getDefault();
+        try {
+            serverSocket = serverSocketFactory.createServerSocket(Integer.valueOf(port));
+        } catch (IOException e) {
+            System.out.println(e);
+        }
+
+        threadPoolExecutor = new ThreadPoolExecutor(60,
+                100,
+                20,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<Runnable>(20),
+                Executors.defaultThreadFactory(),
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+    }
+
+    public static String getIPAddress(){
         String res = null;
         try {
             InetAddress addr = InetAddress.getLocalHost();
-            System.out.println("Local HostAddress: " + addr.getHostAddress());
+            System.out.println("Local HostAddress: "+addr.getHostAddress());
             res = addr.getHostAddress();
             String hostname = addr.getHostName();
-            System.out.println("Local host name: " + hostname);
-        } catch (UnknownHostException e) {
-            System.out.println("[Error] Failed to get IP address: " + e.getMessage());
+            System.out.println("Local host name: "+hostname);
+        } catch(UnknownHostException e) {
+            System.out.println(e);
         }
         return res;
     }
 
-    // Thread 1: Listen for client connections
-    private static class ClientListenerThread extends Thread {
-        private final int port;
-
-        public ClientListenerThread(int port) {
-            this.port = port;
-        }
-
-        @Override
-        public void run() {
-            try (ServerSocket serverSocket = new ServerSocket(port)) {
-                System.out.println("[Info] Listening for clients on port " + port + "...");
-                while (!quitSignal) {
-                    Socket clientSocket = serverSocket.accept();
-                    new ClientHandler(clientSocket).start();
-                }
-            } catch (IOException e) {
-                System.err.println("[Error] ClientListenerThread failed: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-    }
-
-    // Thread 2: Listen for master connections
-    private static class MasterListenerThread extends Thread {
-        private final int port;
-
-        public MasterListenerThread(int port) {
-            this.port = port;
-        }
-
-        @Override
-        public void run() {
-            try (ServerSocket serverSocket = new ServerSocket(port)) {
-                System.out.println("[Info] Listening for master on port " + port + "...");
-                while (!quitSignal) {
-                    Socket masterSocket = serverSocket.accept();
-                    new MasterHandler(masterSocket).start();
-                }
-            } catch (IOException e) {
-                System.err.println("[Error] MasterListenerThread failed: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-    }
-
-    private static class ClientHandler extends Thread {
-        private final Socket socket;
-        private final ThreadPoolExecutor threadPoolExecutor;
-
-        ClientHandler(Socket socket) {
-            this.socket = socket;
-            this.threadPoolExecutor = new ThreadPoolExecutor(60,
-                    100,
-                    20,
-                    TimeUnit.SECONDS,
-                    new ArrayBlockingQueue<Runnable>(20),
-                    Executors.defaultThreadFactory(),
-                    new ThreadPoolExecutor.AbortPolicy());
-        }
-
-        @Override
-        public void run() {
-            System.out.println("[Info] New client connected: " + socket.getInetAddress() + ":" + socket.getPort());
+    public static int getAvailableTcpPort() {
+        for (int i = 1000; i <= 65535; i++) {
             try {
+                new ServerSocket(i).close();
+                return i;
+            } catch (IOException e) {
+                continue;
+            }
+        }
+        return 0;
+    }
+
+    public static void main( String[] args ) throws InterruptedException {
+        ZooKeeperUtils zooKeeperUtils = initRegionServer();
+
+        threadPoolExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                Scanner sc = new Scanner(System.in);
+                while(true){
+                    String cmd = sc.nextLine();
+                    if ( !cmd.equals("quit") ) {
+                        System.out.println(cmd);
+                    } else {
+                        quitSignal = true;
+                        break;
+                    }
+                }
+                sc.close();
+            }
+        });
+        while(true) {
+            try {
+                Socket socket = serverSocket.accept();
                 threadPoolExecutor.submit(new ServerThread(socket, statement, tables));
             } catch (Exception e) {
                 e.printStackTrace();
-            } finally {
-                try {
-                    socket.close();
-                } catch (IOException e) {
-                    System.out.println("[Error] Failed to close client socket: " + e.getMessage());
-                }
+            }
+            if (quitSignal){
+                break;
             }
         }
-    }
-
-    private static class MasterHandler extends Thread {
-        private final Socket socket;
-
-        MasterHandler(Socket socket) {
-            this.socket = socket;
-        }
-
-        @Override
-        public void run() {
-            System.out.println("[Info] New master connection: " + socket.getInetAddress() + ":" + socket.getPort());
-            // TODO: Implement heartbeat monitoring, load reporting, data synchronization, etc.
-            try {
-                while (isSocketAlive(socket)) {
-                    // Handle master commands and heartbeats
-                    Thread.sleep(1000);
-                }
-            } catch (Exception e) {
-                System.out.println("[Error] Master connection error: " + e.getMessage());
-            } finally {
-                try {
-                    socket.close();
-                } catch (IOException e) {
-                    System.out.println("[Error] Failed to close master socket: " + e.getMessage());
-                }
-            }
-        }
-    }
-
-    /**
-     * Check if socket connection is still alive
-     * @return true: connection alive;
-     *         false: connection closed
-     */
-    public static boolean isSocketAlive(Socket socket) {
-        try {
-            socket.sendUrgentData(0xFF); // Send 1 byte urgent data
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        zooKeeperUtils.closeConnection();
     }
 }
