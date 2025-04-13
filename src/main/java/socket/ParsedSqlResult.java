@@ -3,11 +3,13 @@ package socket;
 import lombok.Getter;
 import net.sf.jsqlparser.statement.*;
 
+import java.util.List;
+
 @Getter
 public class ParsedSqlResult {
-    public ParsedSqlResult(SqlType type, String tableName, Statement statement) {
+    public ParsedSqlResult(SqlType type, List<String> tableNames, Statement statement) {
         this.type = type;
-        this.tableName = tableName;
+        this.tableNames = tableNames;
         this.statement = statement;
     }
 
@@ -19,7 +21,7 @@ public class ParsedSqlResult {
     @Getter
     public final SqlType type;
     @Getter
-    public String tableName;
+    public List<String> tableNames;
     @Getter
     public final Statement statement;
 }

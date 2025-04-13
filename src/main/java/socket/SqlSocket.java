@@ -13,16 +13,20 @@ import net.sf.jsqlparser.statement.select.Select;
 import net.sf.jsqlparser.statement.select.SelectItem;
 import net.sf.jsqlparser.statement.truncate.Truncate;
 import net.sf.jsqlparser.statement.update.Update;
+import net.sf.jsqlparser.util.TablesNamesFinder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.util.Collections;
+import java.util.List;
 
-public class MySocket {
+@Getter
+public class SqlSocket {
 
-    public MySocket(Socket newSocket) {
+    public SqlSocket(Socket newSocket) {
         try {
             socket = newSocket;
             input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -39,10 +43,10 @@ public class MySocket {
     }
 
     @Deprecated
-    /**
-     * 测试专用，传入SQL语句，讲分词结果打印在控制台
+    /*
+      测试专用，传入SQL语句，将SQL语句分词结果打印在控制台
      */
-    public MySocket(String sql){
+    public SqlSocket(String sql){
         this.output = new PrintWriter(System.out, true); //绑定控制台输出，避免空指针
         parseSql(sql);
     }
@@ -55,7 +59,9 @@ public class MySocket {
             System.out.println("    Request is: \" " + sql + " \"");
             Statement statement = CCJSqlParserUtil.parse(sql);
             SqlType type;
-            String tableName;
+            TablesNamesFinder tablesNamesFinder = new TablesNamesFinder();
+            List<String> tableNames;
+
             if (statement instanceof Select) {
                 type = SqlType.SELECT;
                 Select select = (Select) statement;
@@ -66,8 +72,8 @@ public class MySocket {
                 for (SelectItem item : plainSelect.getSelectItems()) {
                     output.println("  - " + item);
                 }
-                tableName = plainSelect.getFromItem().toString();
-                output.println("📌 查询表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 查询表名：" + tableNames);
                 if (plainSelect.getWhere() != null) {
                     output.println("📌 查询条件：" + plainSelect.getWhere());
                 }
@@ -76,8 +82,8 @@ public class MySocket {
                 Insert insert = (Insert) statement;
 
                 output.println("✅ 发送的是 INSERT 语句");
-                tableName = insert.getTable().getName();
-                output.println("📌 插入表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 插入表名：" + tableNames);
                 output.println("📌 字段列表：" + insert.getColumns());
                 output.println("📌 插入值：" + insert.getItemsList());
             } else if (statement instanceof CreateTable) {
@@ -85,8 +91,8 @@ public class MySocket {
                 CreateTable create = (CreateTable) statement;
 
                 output.println("✅ 发送的是 CREATE TABLE 语句");
-                tableName = create.getTable().getName();
-                output.println("📌 表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 表名：" + tableNames);
                 output.println("📌 字段定义：");
                 create.getColumnDefinitions().forEach(col -> output.println("  - " + col));
             } else if (statement instanceof Delete) {
@@ -94,8 +100,8 @@ public class MySocket {
                 Delete delete = (Delete) statement;
 
                 output.println("✅ 发送的是 DELETE 语句");
-                tableName = delete.getTable().getName();
-                output.println("📌 删除表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 删除表名：" + tableNames);
                 if (delete.getWhere() != null) {
                     output.println("📌 删除条件：" + delete.getWhere());
                 }
@@ -104,8 +110,8 @@ public class MySocket {
                 Update update = (Update) statement;
 
                 output.println("✅ 发送的是 UPDATE 语句");
-                tableName = update.getTable().getName();
-                output.println("📌 更新表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 更新表名：" + tableNames);
                 output.println("📌 更新字段：");
                 for (int i = 0; i < update.getColumns().size(); i++) {
                     output.println("  - " + update.getColumns().get(i) + " = " + update.getExpressions().get(i));
@@ -118,8 +124,9 @@ public class MySocket {
                 Alter alter = (Alter) statement;
 
                 output.println("✅ 发送的是 ALTER 语句");
-                tableName = alter.getTable().getName();
-                output.println("📌 修改的表名：" + tableName);
+                String tableName = alter.getTable().getName();
+                tableNames = Collections.singletonList(tableName);
+                output.println("📌 修改的表名：" + tableNames);
                 output.println("📌 修改操作列表：");
                 alter.getAlterExpressions().forEach(expr -> output.println("  - " + expr));
             } else if (statement instanceof Truncate) {
@@ -127,34 +134,30 @@ public class MySocket {
                 Truncate truncate = (Truncate) statement;
 
                 output.println("✅ 发送的是 TRUNCATE 语句");
-                tableName = truncate.getTable().getName();
-                output.println("📌 清空的表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 清空的表名：" + tableNames);
             }else if (statement instanceof Drop) {
                 type = SqlType.DROP;
                 Drop drop = (Drop) statement;
 
                 output.println("✅ 发送的是 DROP 语句");
                 output.println("📌 删除类型：" + drop.getType());
-                tableName = String.valueOf(drop.getName());
-                output.println("📌 删除的表名：" + tableName);
+                tableNames = tablesNamesFinder.getTableList(statement);
+                output.println("📌 删除的表名：" + tableNames);
             } else {
                 type = SqlType.UNKNOWN;
-                tableName = "";
+                tableNames = null;
                 output.println("⚠️ 暂不支持解析的语句类型：" + statement.getClass().getSimpleName());
             }
-            parsedSqlResult = new ParsedSqlResult(type, tableName, statement);
+            parsedSqlResult = new ParsedSqlResult(type, tableNames, statement);
         } catch (Exception e) {
             output.println("❌ SQL 解析失败：" + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    @Getter
     private Socket socket;
-    @Getter
     private BufferedReader input;
-    @Getter
     private PrintWriter output;
-    @Getter
     private ParsedSqlResult parsedSqlResult;
 }
