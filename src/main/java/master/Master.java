@@ -3,13 +3,17 @@ package master;
 import socket.SqlSocket;
 import socket.ParsedSqlResult;
 import socket.SqlType;
+import zookeeper.TableInform;
+import zookeeper.ZooKeeperManager;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Master {
     //Master主程序：打开服务器，监听客户端并分配线程连接
@@ -87,13 +91,22 @@ public class Master {
                     while ((sql = input.readLine()) == null) ;//持续接受并读取客户端输入
                     sqlSocket.parseSql(sql);//处理字符串
                     ParsedSqlResult parsedSqlResult = sqlSocket.getParsedSqlResult();
+                    if(parsedSqlResult == null || parsedSqlResult.getType() == SqlType.UNKNOWN) {
+                        continue;
+                    }
                     List<String> tableNames = parsedSqlResult.getTableNames();
                     SqlType type = parsedSqlResult.getType();
                     if (type == SqlType.CREATE) {//create需要寻找满足负载均衡的node
-                        RegionManager.regionsInfo = RegionManager.getRegionsInfo();//刷新重读，防止数据过期
-                        RegionManager.regionsLoad = RegionManager.getRegionsLoad();
-                        //String leastRegion = RegionManager.getLeastRegion();
+                        Map<String, Boolean> res = createTable(tableNames);
+                        for (String tableName : tableNames) {
+                            if(res.containsKey(tableName) && res.get(tableName)) {
+                                output.println("Create Table" + tableName + " successfully");
+                            }else{
+                                output.println("Create Table" + tableName + " failed");
+                            }
+                        }
                     } else {
+                        Map<String, Map<String, Integer>> regionsTablesInfo;
                         /*TODO:调用Zookeeper的函数获取表所在的节点
                         StringBuilder result = new StringBuilder();
                         for (String nodeInfo : tableInfo) {
@@ -128,6 +141,21 @@ public class Master {
                     throw new RuntimeException(ex);
                 }
             }
+        }
+
+        private Map<String, Boolean> createTable(List<String> tableNames) throws Exception {
+            RegionManager.regionsInfo = RegionManager.getRegionsInfo();//刷新重读，防止数据过期
+            RegionManager.regionsLoad = RegionManager.getRegionsLoad();
+            String leastRegionName = RegionManager.getLeastRegionName();
+            Map<String, Boolean> res = new HashMap<>();
+            for(String tableName : tableNames) {
+                TableInform tableInform = new TableInform(tableName, 0);
+                RegionManager.zooKeeperManager.addTable(leastRegionName, tableInform);
+                System.out.println("New table created, name: " + tableName  + ", ip: " + leastRegionName);
+                res.put(tableName, true);
+            }
+            RegionManager.regionsInfo = RegionManager.getRegionsInfo();//更新
+            return res;
         }
     }
 
