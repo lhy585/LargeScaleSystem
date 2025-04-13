@@ -13,7 +13,7 @@ public class Server {
     public static void main(String[] args) throws Exception {
         ServerSocket server = new ServerSocket(5000);//接受客户端连接
         System.out.println("[Info]Master is initializing...");
-        RegionManager.init();//初始化
+//        RegionManager.init();//初始化
         System.out.println("[Info]Initializing successfully!");
         while (true) {//持续监听
             Socket clientSocket = server.accept();

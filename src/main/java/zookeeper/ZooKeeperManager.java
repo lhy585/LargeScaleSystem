@@ -4,7 +4,6 @@ import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.ZooDefs;
 
 import java.util.List;
-
 public class ZooKeeperManager {
     public ZooKeeperUtils zooKeeperUtils;
     public String address="127.0.0.1";
@@ -85,6 +84,72 @@ public class ZooKeeperManager {
         }
         catch (Exception e){
             e.printStackTrace();
+        }
+    }
+    public boolean addTable(String ip, TableInform table){
+        try{
+            zooKeeperUtils.createNode("/lss/region_server/"+ip+"/table/"+table.name,"");
+            zooKeeperUtils.createNode("/lss/region_server/"+ip+"/table/"+table.name+"/payload",table.payload.toString());
+        }
+        catch (Exception e){
+            e.printStackTrace();
+            return false;
+        }
+        return true;
+    }
+    public boolean deleteTable(String table_name){
+        try{
+            String ip=getRegionServer(table_name);
+            if(ip==null){
+                System.out.println("the table ["+table_name+"] does not exist");
+            }
+            zooKeeperUtils.deleteNodeRecursively("/lss/region_server/"+ip+"/table/"+table_name);
+            return true;
+        }
+        catch (Exception e){
+            e.printStackTrace();
+            return false;
+
+        }
+    }
+    public boolean accTablePayload(String table_name){
+        try{
+            String ip=getRegionServer(table_name);
+            if(ip==null){
+                System.out.println("the table ["+table_name+"] does not exist");
+            }
+
+            int payload=Integer.parseInt(zooKeeperUtils.getData("/lss/region_server/"+ip+"/table/"+table_name+"/payload"));
+            payload++;
+            zooKeeperUtils.setData("/lss/region_server/"+ip+"/table/"+table_name+"/payload",String.valueOf(payload));
+            return true;
+        }
+        catch (Exception e){
+            e.printStackTrace();
+            return false;
+
+        }
+    }
+    public boolean decTablePayload(String table_name){
+        try{
+            String ip=getRegionServer(table_name);
+            if(ip==null){
+                System.out.println("the table ["+table_name+"] does not exist");
+            }
+
+            int payload=Integer.parseInt(zooKeeperUtils.getData("/lss/region_server/"+ip+"/table/"+table_name+"/payload"));
+            payload--;
+            if(payload<0){
+                System.out.println("the payload of table ["+table_name+"] cannot be negative");
+                return false;
+            }
+            zooKeeperUtils.setData("/lss/region_server/"+ip+"/table/"+table_name+"/payload",String.valueOf(payload));
+            return true;
+        }
+        catch (Exception e){
+            e.printStackTrace();
+            return false;
+
         }
     }
 }

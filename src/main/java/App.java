@@ -28,9 +28,22 @@ public class App {
             System.out.println(111);
             System.out.println("table1 is at server ip = "+master.getRegionServer("table1"));
             System.out.println("table2 is at server ip = "+master.getRegionServer("table2"));
-            System.out.println("client2 disconnected");
+//            System.out.println("client2 disconnected");
 //            zooKeeperManager1.close();
 //            zooKeeperManager.close();
+            zooKeeperManager.addTable("1.1.1.1",tableInform2);
+            if(zooKeeperManager.accTablePayload("table1")){
+                System.out.println("acc success");
+            }
+            if(zooKeeperManager.accTablePayload("table1")){
+                System.out.println("acc success");
+            }
+            if(zooKeeperManager.accTablePayload("table1")){
+                System.out.println("acc success");
+            }
+            zooKeeperManager.decTablePayload("table1");
+            zooKeeperManager.deleteTable("table2");
+
             while(true){
 
             }
