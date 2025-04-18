@@ -8,6 +8,6 @@ public enum SqlType {
     CREATE,   // 创建表
     DROP,     // 删除表
     ALTER,    // 修改表
-    TRUNCATE, // 重命名表
+    TRUNCATE, // 清空表
     UNKNOWN   // 未知类型
 }

@@ -3,17 +3,13 @@ package master;
 import socket.SqlSocket;
 import socket.ParsedSqlResult;
 import socket.SqlType;
-import zookeeper.TableInform;
-import zookeeper.ZooKeeperManager;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class Master {
     //Master主程序：打开服务器，监听客户端并分配线程连接
@@ -72,19 +68,22 @@ public class Master {
         }
     }
 
+    // 处理Client连接
     private static class ClientHandler extends Thread {
         private final SqlSocket sqlSocket;
 
-        ClientHandler(Socket socket) {
+        public ClientHandler(Socket socket) {
             this.sqlSocket = new SqlSocket(socket);
         }
 
         @Override
-        public void run() {//线程主逻辑
+        public void run() {
             Socket socket = sqlSocket.getSocket();
             BufferedReader input = sqlSocket.getInput();
             PrintWriter output = sqlSocket.getOutput();
-            System.out.println("New client connected, address: " + socket.getInetAddress() + ", port: " + socket.getPort());
+
+            System.out.println("[Info] New client connected: " + socket.getInetAddress() + ":" + socket.getPort());
+
             try {
                 String sql;
                 while (isSocketAlive(socket)) {
@@ -94,82 +93,189 @@ public class Master {
                     if(parsedSqlResult == null || parsedSqlResult.getType() == SqlType.UNKNOWN) {
                         continue;
                     }
+
                     List<String> tableNames = parsedSqlResult.getTableNames();
                     SqlType type = parsedSqlResult.getType();
-                    if (type == SqlType.CREATE) {//create需要寻找满足负载均衡的node
-                        Map<String, Boolean> res = createTable(tableNames);
-                        for (String tableName : tableNames) {
-                            if(res.containsKey(tableName) && res.get(tableName)) {
-                                output.println("Create Table" + tableName + " successfully");
-                            }else{
-                                output.println("Create Table" + tableName + " failed");
-                            }
-                        }
-                    } else {
-                        Map<String, Map<String, Integer>> regionsTablesInfo;
-                        /*TODO:调用Zookeeper的函数获取表所在的节点
-                        StringBuilder result = new StringBuilder();
-                        for (String nodeInfo : tableInfo) {
-                            String[] list = nodeInfo.split(",");
-                            boolean flag = false;
-                            for (String s : list) {
-                                if (Objects.equals(s, tableName) || Objects.equals(s.split("_")[0], tableName)) {
-                                    flag = true;
-                                    break;
+
+                    for(String tableName : tableNames){
+                        String region = RegionManager.zooKeeperManager.getRegionServer(tableName);
+                        output.println("Table: " + tableName + " is in Region: " + region + ".");
+                    }
+
+                    Map<String, ResType> res;
+                    switch (type) {
+                        case CREATE:
+                            res = createTable(tableNames);
+                            for(String tableName : tableNames){
+                                if(res.containsKey(tableName) && res.get(tableName)==ResType.CREATE_TABLE_SUCCESS) {
+                                    System.out.println("Create Table " + tableName + " successfully");
+                                }else{
+                                    System.out.println("Create Table " + tableName + " failed");
                                 }
                             }
-                            if (flag) {
-                                System.out.println("TARGET REGION SERVER: " + nodeInfo);
-                                if (result.toString().equals("")) {
-                                    result.append(nodeInfo).append(";");
-                                } else {
-                                    result.append(nodeInfo);
+                            break;
+                        case DROP:
+                            res = dropTable(tableNames);
+                            for(String tableName : tableNames){
+                                if(res.containsKey(tableName) && res.get(tableName)==ResType.DROP_TABLE_SUCCESS) {
+                                    System.out.println("Drop Table " + tableName + " successfully");
+                                }else{
+                                    System.out.println("Drop Table " + tableName + " failed");
                                 }
                             }
-                        }
-                        printWriter.println(result);
-                        TODO:将结果输出给Server
-                         */
+                            break;
+                        case INSERT:
+                            res = insert(tableNames);
+                            for(String tableName : tableNames){
+                                if(res.containsKey(tableName)){
+                                    ResType resType = res.get(tableName);
+                                    if(resType==ResType.INSERT_SUCCESS){
+                                        System.out.println("Insert into Table " + tableName + " successfully");
+                                    }else if(resType==ResType.INSERT_FAILURE){
+                                        System.out.println("Insert into Table " + tableName + " failed");
+                                    }else{
+                                        System.out.println("Insert into Table " + tableName + " doesn't exist");
+                                    }
+                                }
+                            }
+                            break;
+                        case DELETE:
+                            res = delete(tableNames);
+                            for(String tableName : tableNames){
+                                if(res.containsKey(tableName)){
+                                    ResType resType = res.get(tableName);
+                                    if(resType==ResType.DELECT_SUCCESS){
+                                        System.out.println("Delete from Table " + tableName + " successfully");
+                                    }else if(resType==ResType.DELECT_FAILURE){
+                                        System.out.println("Delete from Table " + tableName + " failed");
+                                    }else{
+                                        System.out.println("Delete from Table " + tableName + " doesn't exist");
+                                    }
+                                }
+                            }
+                            break;
+                        case UPDATE:
+                        case ALTER:
+                        case SELECT:
+                            res = findTable(tableNames);
+                            for(String tableName : tableNames){
+                                if (res.containsKey(tableName)) {
+                                    ResType resType = res.get(tableName);
+                                    if (resType == ResType.FIND_SUCCESS) {
+                                        System.out.println("Find Table " + tableName + " successfully");
+                                    } else {
+                                        System.out.println("Find Table " + tableName + " doesn't exist");
+                                    }
+                                }
+                            }
+                            break;
+                        case TRUNCATE:
+                            res = truncate(tableNames);
+                            for(String tableName : tableNames){
+                                if (res.containsKey(tableName)) {
+                                    ResType resType = res.get(tableName);
+                                    if(resType==ResType.TRUNCATE_SUCCESS){
+                                        System.out.println("Truncate Table " + tableName + " successfully");
+                                    }else{
+                                        System.out.println("Truncate Table " + tableName + " doesn't exist");
+                                    }
+                                }
+                            }
+                        default:
+                            break;
                     }
                 }
-                sqlSocket.destroy();//连接断开，释放资源
-            } catch (Exception e) {
+            } catch (IOException e) {
+                System.err.println("[Error] ClientHandler IOException: " + e.getMessage());
                 e.printStackTrace();
+            } finally {
                 try {
-                    sqlSocket.destroy();
-                } catch (IOException ex) {
-                    throw new RuntimeException(ex);
+                    sqlSocket.destroy(); // 释放资源
+                } catch (IOException e) {
+                    System.err.println("[Error] Failed to destroy SqlSocket: " + e.getMessage());
                 }
             }
         }
 
-        private Map<String, Boolean> createTable(List<String> tableNames) throws Exception {
-            RegionManager.regionsInfo = RegionManager.getRegionsInfo();//刷新重读，防止数据过期
-            RegionManager.regionsLoad = RegionManager.getRegionsLoad();
-            String leastRegionName = RegionManager.getLeastRegionName();
-            Map<String, Boolean> res = new HashMap<>();
+        // 创建表
+        private static Map<String, ResType> createTable(List<String> tableNames) {
+            Map<String, ResType> res = new LinkedHashMap<>();
             for(String tableName : tableNames) {
-                TableInform tableInform = new TableInform(tableName, 0);
-                RegionManager.zooKeeperManager.addTable(leastRegionName, tableInform);
-                System.out.println("New table created, name: " + tableName  + ", ip: " + leastRegionName);
-                res.put(tableName, true);
+                List<ResType> ansList = RegionManager.addTableMasterAndSlave(tableName);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
             }
-            RegionManager.regionsInfo = RegionManager.getRegionsInfo();//更新
+            return res;
+        }
+
+        // 删除表
+        private static Map<String, ResType> dropTable(List<String> tableNames) {
+            Map<String, ResType> res = new LinkedHashMap<>();
+            for(String tableName : tableNames) {
+                List<ResType> ansList = RegionManager.dropTableMasterAndSlave(tableName);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
+            }
+            return res;
+        }
+
+        // 插入数据
+        private static Map<String, ResType> insert(List<String> tableNames) {
+            Map<String, ResType> res = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                List<ResType> ansList = RegionManager.accTableMasterAndSlave(tableName);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
+            }
+            return res;
+        }
+
+        // 删除数据
+        private static Map<String, ResType> delete(List<String> tableNames) {
+            Map<String, ResType> res = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                List<ResType> ansList = RegionManager.decTableMasterAndSlave(tableName);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
+            }
+            return res;
+        }
+
+        // 更新数据
+        private static Map<String, ResType> findTable(List<String> tableNames) {
+            Map<String, ResType> res = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                List<ResType> ansList = RegionManager.findTableMasterAndSlave(tableName);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
+            }
+            return res;
+        }
+
+        // 清空数据表数据
+        private static Map<String, ResType> truncate(List<String> tableNames) {
+            Map<String, ResType> res = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                List<ResType> ansList = RegionManager.truncateTableMasterAndSlave(tableName);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
+            }
             return res;
         }
     }
 
+    // 处理RegionServer连接
     private static class RegionServerHandler extends Thread {
         private final Socket socket;
 
-        RegionServerHandler(Socket socket) {
+        public RegionServerHandler(Socket socket) {
             this.socket = socket;
         }
 
         @Override
         public void run() {
             System.out.println("[Info] New region server connected: " + socket.getInetAddress() + ":" + socket.getPort());
-            // TODO: 在此实现心跳监听、上报表负载、数据同步等
+            // TODO: 在此实现和region server通信
         }
     }
 
