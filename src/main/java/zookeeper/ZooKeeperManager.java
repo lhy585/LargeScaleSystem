@@ -152,4 +152,22 @@ public class ZooKeeperManager {
 
         }
     }
+    public boolean setTablePayload(String table_name,int payload){
+        try{
+            String ip=getRegionServer(table_name);
+            if(ip==null){
+                System.out.println("the table ["+table_name+"] does not exist");
+            }
+            if(payload<0){
+                System.out.println("the payload of table ["+table_name+"] cannot be negative");
+                return false;
+            }
+            zooKeeperUtils.setData("/lss/region_server/"+ip+"/table/"+table_name+"/payload",String.valueOf(payload));
+            return true;
+        }
+        catch(Exception e){
+            e.printStackTrace();
+            return false;
+        }
+    }
 }
