@@ -201,7 +201,7 @@ public class Master {
         private static Map<String, ResType> createTable(List<String> tableNames) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for(String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.addTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.createTableMasterAndSlave(tableName);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }

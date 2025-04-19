@@ -28,18 +28,20 @@ public class RegionManager{
 
     /**
      * 初始化，从ZooKeeper处获取nodes数据
+     * TODO:待测试
      */
     public static void init() throws Exception {
         zooKeeperManager = new ZooKeeperManager();
         zooKeeperUtils = zooKeeperManager.zooKeeperUtils;
         regionsInfo = getRegionsInfo();
-        update();
+        sortAndUpdate();
         masterInfo = zooKeeperUtils.getData("/lss/master");
     }
 
     /**
      * 获取当前所有region node的情况
      * 记录region server下的表名以及表对应的load
+     * TODO:待测试
      */
     public static Map<String, Map<String, Integer>> getRegionsInfo() throws Exception {
         Map<String, Map<String, Integer>> newLegionsInfo = new LinkedHashMap<>();
@@ -61,6 +63,7 @@ public class RegionManager{
      * @return Map<String, Integer>
      *         String为region server对应的ip+port(从ZooKeeper处获得）
      *         Integer为该region server对应的负载
+     * --测试通过--
      */
     public static Map<String, Integer> getRegionsLoad() {
         Map<String, Integer> newRegionsLoad = new LinkedHashMap<>();
@@ -78,8 +81,10 @@ public class RegionManager{
         return sortLoadAsc(newRegionsLoad);
     }
 
-    /** 获取总负荷，用于平衡不同region server的负荷
+    /**
+     * 获取总负荷，用于平衡不同region server的负荷
      * @return regions servers的总负荷
+     * --测试通过--
      */
     public static Integer getLoadsSum() {
         Integer sum = 0;
@@ -89,7 +94,11 @@ public class RegionManager{
         return sum;
     }
 
-    public static void update(){
+    /**
+     * 排序regionInfo,同时根据regionInfo更新regionLoad、loadSum和loadAvg
+     * --测试通过--
+     */
+    public static void sortAndUpdate(){
         Map<String, Map<String, Integer>> sortedRegionsInfo = new LinkedHashMap<>();
         for(String regionName : regionsInfo.keySet()){
             sortedRegionsInfo.put(regionName, sortLoadDsc(regionsInfo.get(regionName)));
@@ -99,9 +108,11 @@ public class RegionManager{
         loadsSum = getLoadsSum();
         loadsAvg = loadsSum/regionsInfo.size();
     }
+
     /**
      * 排序，按负载降序排序优先处理，
      * 便于负载小的region server先接收load最大的table
+     * --测试通过--
      */
     public static Map<String, Integer> sortLoadAsc(Map<String, Integer> loads){
         return loads.entrySet()
@@ -115,7 +126,10 @@ public class RegionManager{
                 ));
     }
 
-    //降序排序
+    /**
+     * 降序排序
+     * --测试通过--
+     */
     public static Map<String, Integer> sortLoadDsc(Map<String, Integer> loads){
         return loads.entrySet()
                 .stream()
@@ -129,12 +143,12 @@ public class RegionManager{
     }
 
     /**
-     * 用于副本容灾
      * 寻找负载最小的不含有某个表名的region server名字
      * @return 如果有节点，则返回最小节点对应的名字；如果没有节点，返回null
+     * --测试通过--
      */
     public static String getLeastRegionName(String tableName) {
-        update();
+        sortAndUpdate();
         String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
         String slaveTableName = masterTableName + "_slave";
 
@@ -148,22 +162,31 @@ public class RegionManager{
         return null;
     }
 
-    //寻找负载最大的region server名字
-    public static String getLargestRegionName(){
-        update();
+    /**
+     * 寻找负载最大的region server名字,同时保证该region server存在可以迁移的不重复的表
+     * 用于addRegion时平衡负荷，新region server先从最大的region server里面选择表
+     * --测试通过--
+     */
+    public static String getLargestRegionName(Map<String, Integer> existTablesInfo){
+        sortAndUpdate();
         if (!regionsLoad.isEmpty()) {
             // regionsLoad是排好序的，直接最后一个
             List<Map.Entry<String, Integer>> entries = new ArrayList<>(regionsLoad.entrySet());
-            Map.Entry<String, Integer> largestRegion = entries.get(entries.size() - 1);
-            return largestRegion.getKey();
-        }else {
-            return null;
+            for(int i = entries.size() - 1; i>=0; i--){
+                Map.Entry<String, Integer> largestRegion = entries.get(i);
+                String regionName = largestRegion.getKey();
+                if(getLargerTableInfo(regionName, 0, existTablesInfo)!=null){
+                    return regionName;
+                }
+            }
         }
+        return null;
     }
 
     /**
-     * 寻找大于给定负荷的最小负荷的表
+     * 寻找大于等于指定负荷且符合最小的表，同时该表(母本/副本)不能出现在Map中
      * @return 如果有表，则返回表对应的Info; 如果没有节点,返回null
+     * --测试通过--
      */
     public static Map<String, Integer> getLargerTableInfo(String regionName, Integer load, Map<String, Integer> existTablesInfo) {
         Map<String, Integer> tablesInfo = regionsInfo.get(regionName);
@@ -176,12 +199,13 @@ public class RegionManager{
             String tableName = entry.getKey();
             String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
             String slaveTableName = masterTableName + "_slave";
-            if (!existTablesInfo.containsKey(masterTableName) && !existTablesInfo.containsKey(slaveTableName)
-                    && tableLoad >= load ) {//母本和副本不出现在同一个region server里面
-                // 如果第一次符合，或者找到更小的满足条件的表
-                if (result == null || tableLoad < result.values().iterator().next()) {
+            if (!existTablesInfo.containsKey(masterTableName) && !existTablesInfo.containsKey(slaveTableName)) {//母本和副本不出现在同一个region server里面
+                // 返回负荷最大的表或者满足条件且负荷较小的表
+                if (result == null || tableLoad>=load) {
                     result = new LinkedHashMap<>();
                     result.put(tableName, tableLoad);
+                }else{
+                    break;
                 }
             }
         }
@@ -195,22 +219,22 @@ public class RegionManager{
      * 将其他region server上的数据表匀给该region server上
      */
     public static ResType addRegion(String addRegionName) {
-        if(!regionsInfo.containsKey(addRegionName)){
+        if(regionsInfo.containsKey(addRegionName)){
             return ResType.ADD_REGION_ALREADY_EXISTS;
         }
-        update();
-        loadsAvg = getLoadsSum()/(regionsInfo.size()+1);//为它提前考虑
+        sortAndUpdate();
+        Integer avgLoad = getLoadsSum()/(regionsInfo.size()+1);//为它提前考虑
 
         Map<String, Integer> addTablesInfo = new LinkedHashMap<>();
         Integer addRegionLoadSum = 0;
-        while (addRegionLoadSum < loadsAvg) {
-            update();
-            String largestRegionName = getLargestRegionName();
+        while (addRegionLoadSum < avgLoad) {
+            sortAndUpdate();
+            String largestRegionName = getLargestRegionName(addTablesInfo);
             Map<String, Integer> largerRegionTables = regionsInfo.get(largestRegionName);
             if (largerRegionTables == null || largerRegionTables.size() <= 1){// 说明这个region不能再迁了
                 break;
             }
-            Integer aimLoad = Math.max(loadsAvg - addRegionLoadSum, regionsLoad.get(largestRegionName) - loadsAvg);
+            Integer aimLoad = Math.min(avgLoad - addRegionLoadSum, regionsLoad.get(largestRegionName) - avgLoad);
             Map<String, Integer> largestTableInfo = getLargerTableInfo(largestRegionName, aimLoad, addTablesInfo);
             String tableNameToMove;
             if (largestTableInfo != null) {
@@ -230,7 +254,7 @@ public class RegionManager{
             addTablesInfo.put(tableNameToMove, tableLoadToMove);
         }
         regionsInfo.put(addRegionName, addTablesInfo);
-        update();
+        sortAndUpdate();
         return ResType.ADD_REGION_SUCCESS;
     }
 
@@ -245,7 +269,7 @@ public class RegionManager{
         Map<String, Integer> delTablesInfo = regionsInfo.get(delRegionName);
         regionsInfo.remove(delRegionName);//首先移除被删除region server，防止参与分配tables
         for(String tableName : delTablesInfo.keySet()){
-            update();
+            sortAndUpdate();
             String leastRegionName = getLeastRegionName(tableName);//防止同一region server存储了母本和副本
             Map<String, Integer> leastTablesInfo = regionsInfo.get(leastRegionName);
             Integer tableLoad = delTablesInfo.get(tableName);
@@ -253,32 +277,48 @@ public class RegionManager{
             regionsInfo.put(leastRegionName, leastTablesInfo);
             //TODO:迁移操作
         }
-        update();
+        sortAndUpdate();
         return ResType.DROP_REGION_SUCCESS;
     }
 
-    public static List<ResType> addTableMasterAndSlave(String tableName) {
-        update();//更新信息
+    public static List<ResType> createTableMasterAndSlave(String tableName) {
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
+        List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.CREATE_TABLE_FAILURE);
+        }else{
+            res.add(ResType.CREATE_TABLE_ALREADY_EXISTS);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.CREATE_TABLE_FAILURE);
+        }else{
+            res.add(ResType.CREATE_TABLE_ALREADY_EXISTS);
+        }
+        if(res.get(0) == ResType.CREATE_TABLE_ALREADY_EXISTS || res.get(1) == ResType.CREATE_TABLE_ALREADY_EXISTS){
+            return res;
+        }else{
+            res = new ArrayList<>();
+        }
+
         Iterator<Map.Entry<String, Map<String, Integer>>> iterator = regionsInfo.entrySet().iterator();
 
-        List<ResType> res = new ArrayList<>();
         if (iterator.hasNext()) {
             String masterRegionName = iterator.next().getKey(); //第一个region server用于存放master
-            res.add(addTable(masterRegionName, tableName));
+            res.add(createTable(masterRegionName, tableName));
         }else{
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
         if (iterator.hasNext()) {
             String slaveRegionName = iterator.next().getKey(); //第二个region server用于存放slave
-            res.add(addTable(slaveRegionName, tableName + "_slave"));
+            res.add(createTable(slaveRegionName, tableName + "_slave"));
         }else{
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
-        update();//更新
+        sortAndUpdate();//更新
         return res;
     }
 
-    private static ResType addTable(String regionName, String tableName) {
+    private static ResType createTable(String regionName, String tableName) {
         if(zooKeeperManager.addTable(regionName, new TableInform(tableName,0))){
             regionsInfo.get(regionName).put(tableName, 0);
             return ResType.CREATE_TABLE_SUCCESS;
@@ -288,13 +328,27 @@ public class RegionManager{
     }
 
     public static List<ResType> dropTableMasterAndSlave(String tableName) {
-        update();//更新信息
-
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.DROP_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.DROP_TABLE_FAILURE);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.DROP_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.DROP_TABLE_FAILURE);
+        }
+        if(res.get(0) == ResType.DROP_TABLE_NO_EXISTS || res.get(1) == ResType.DROP_TABLE_NO_EXISTS){
+            return res;
+        }else{
+            res = new ArrayList<>();
+        }
+
         res.add(dropTable(tableName));
         res.add(dropTable(tableName + "_slave"));
-
-        update();//更新
+        sortAndUpdate();//更新
         return res;
     }
 
@@ -309,10 +363,27 @@ public class RegionManager{
     }
 
     public static List<ResType> accTableMasterAndSlave(String tableName) {
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.INSERT_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.INSERT_FAILURE);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.INSERT_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.INSERT_FAILURE);
+        }
+        if(res.get(0) == ResType.INSERT_TABLE_NO_EXISTS || res.get(1) == ResType.INSERT_TABLE_NO_EXISTS){
+            return res;
+        }else{
+            res = new ArrayList<>();
+        }
+
         res.add(accTable(tableName));
         res.add(accTable(tableName + "_slave"));
-        update();
+        sortAndUpdate();
         return res;
     }
 
@@ -331,10 +402,27 @@ public class RegionManager{
     }
 
     public static List<ResType> decTableMasterAndSlave(String tableName) {
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.DELECT_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.DELECT_FAILURE);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.DELECT_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.DELECT_FAILURE);
+        }
+        if(res.get(0) == ResType.DELECT_TABLE_NO_EXISTS || res.get(1) == ResType.DELECT_TABLE_NO_EXISTS){
+            return res;
+        }else{
+            res = new ArrayList<>();
+        }
+
         res.add(decTable(tableName));
         res.add(decTable(tableName + "_slave"));
-        update();
+        sortAndUpdate();
         return res;
     }
 
@@ -368,10 +456,27 @@ public class RegionManager{
     }
 
     public static List<ResType> truncateTableMasterAndSlave(String tableName) {
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.TRUNCATE_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.TRUNCATE_FAILURE);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.TRUNCATE_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.TRUNCATE_FAILURE);
+        }
+        if(res.get(0) == ResType.TRUNCATE_TABLE_NO_EXISTS || res.get(1) == ResType.TRUNCATE_TABLE_NO_EXISTS){
+            return res;
+        }else{
+            res = new ArrayList<>();
+        }
+
         res.add(truncateTable(tableName));
         res.add(truncateTable(tableName + "_slave"));
-        update();
+        sortAndUpdate();
         return res;
     }
 
