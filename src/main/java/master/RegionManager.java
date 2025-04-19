@@ -129,22 +129,28 @@ public class RegionManager{
     }
 
     /**
-     * 寻找负载最小的region server名字
+     * 用于副本容灾
+     * 寻找负载最小的不含有某个表名的region server名字
      * @return 如果有节点，则返回最小节点对应的名字；如果没有节点，返回null
      */
-    public static String getLeastRegionName() {
-        if (!regionsLoad.isEmpty()) {
-            // regionsLoad是排好序的，直接取第一个
-            Map.Entry<String, Integer> leastRegionLoad = regionsLoad.entrySet().stream().findFirst().get();
-            return leastRegionLoad.getKey();
-        }else{
-            return null;
-        }
+    public static String getLeastRegionName(String tableName) {
+        update();
+        String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
+        String slaveTableName = masterTableName + "_slave";
 
+        for (Map.Entry<String, Integer> entry : regionsLoad.entrySet()) {
+            String regionServer = entry.getKey();
+            Map<String, Integer> tables = regionsInfo.get(regionServer);
+            if (!tables.containsKey(masterTableName) && !tables.containsKey(slaveTableName)) {
+                return regionServer;
+            }
+        }
+        return null;
     }
 
     //寻找负载最大的region server名字
     public static String getLargestRegionName(){
+        update();
         if (!regionsLoad.isEmpty()) {
             // regionsLoad是排好序的，直接最后一个
             List<Map.Entry<String, Integer>> entries = new ArrayList<>(regionsLoad.entrySet());
@@ -159,7 +165,7 @@ public class RegionManager{
      * 寻找大于给定负荷的最小负荷的表
      * @return 如果有表，则返回表对应的Info; 如果没有节点,返回null
      */
-    public static Map<String, Integer> getLargerTableInfo(String regionName, Integer load) {
+    public static Map<String, Integer> getLargerTableInfo(String regionName, Integer load, Map<String, Integer> existTablesInfo) {
         Map<String, Integer> tablesInfo = regionsInfo.get(regionName);
         if (tablesInfo == null || tablesInfo.isEmpty()) {
             return null;
@@ -167,18 +173,17 @@ public class RegionManager{
         Map<String, Integer> result = null;
         for (Map.Entry<String, Integer> entry : tablesInfo.entrySet()) {
             Integer tableLoad = entry.getValue();
-            if (tableLoad >= load) {
-                String tableName = entry.getKey();
+            String tableName = entry.getKey();
+            String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
+            String slaveTableName = masterTableName + "_slave";
+            if (!existTablesInfo.containsKey(masterTableName) && !existTablesInfo.containsKey(slaveTableName)
+                    && tableLoad >= load ) {//母本和副本不出现在同一个region server里面
                 // 如果第一次符合，或者找到更小的满足条件的表
                 if (result == null || tableLoad < result.values().iterator().next()) {
                     result = new LinkedHashMap<>();
                     result.put(tableName, tableLoad);
                 }
             }
-        }
-        if(result != null){
-            tablesInfo.remove( result.keySet().iterator().next());
-            update();
         }
         return result;
     }
@@ -197,16 +202,16 @@ public class RegionManager{
         loadsAvg = getLoadsSum()/(regionsInfo.size()+1);//为它提前考虑
 
         Map<String, Integer> addTablesInfo = new LinkedHashMap<>();
-        Integer addRegionloadSum = 0;
-        while (addRegionloadSum < loadsAvg) {
+        Integer addRegionLoadSum = 0;
+        while (addRegionLoadSum < loadsAvg) {
             update();
             String largestRegionName = getLargestRegionName();
             Map<String, Integer> largerRegionTables = regionsInfo.get(largestRegionName);
             if (largerRegionTables == null || largerRegionTables.size() <= 1){// 说明这个region不能再迁了
                 break;
             }
-            Integer aimLoad = Math.max(loadsAvg - addRegionloadSum, regionsLoad.get(largestRegionName) - loadsAvg);
-            Map<String, Integer> largestTableInfo = getLargerTableInfo(largestRegionName, aimLoad);
+            Integer aimLoad = Math.max(loadsAvg - addRegionLoadSum, regionsLoad.get(largestRegionName) - loadsAvg);
+            Map<String, Integer> largestTableInfo = getLargerTableInfo(largestRegionName, aimLoad, addTablesInfo);
             String tableNameToMove;
             if (largestTableInfo != null) {
                 tableNameToMove = largestTableInfo.keySet().iterator().next();
@@ -221,7 +226,7 @@ public class RegionManager{
             largerRegionTables.remove(tableNameToMove);
             regionsInfo.put(largestRegionName, largerRegionTables);
             //处理表迁入的region server
-            addRegionloadSum += tableLoadToMove;
+            addRegionLoadSum += tableLoadToMove;
             addTablesInfo.put(tableNameToMove, tableLoadToMove);
         }
         regionsInfo.put(addRegionName, addTablesInfo);
@@ -238,12 +243,14 @@ public class RegionManager{
             return ResType.DROP_REGION_NO_EXISTS;
         }
         Map<String, Integer> delTablesInfo = regionsInfo.get(delRegionName);
-        regionsInfo.remove(delRegionName);
+        regionsInfo.remove(delRegionName);//首先移除被删除region server，防止参与分配tables
         for(String tableName : delTablesInfo.keySet()){
             update();
-            String leastRegionName = getLeastRegionName();
+            String leastRegionName = getLeastRegionName(tableName);//防止同一region server存储了母本和副本
             Map<String, Integer> leastTablesInfo = regionsInfo.get(leastRegionName);
-            leastTablesInfo.put(tableName, delTablesInfo.get(tableName));
+            Integer tableLoad = delTablesInfo.get(tableName);
+            leastTablesInfo.put(tableName, tableLoad);
+            regionsInfo.put(leastRegionName, leastTablesInfo);
             //TODO:迁移操作
         }
         update();
