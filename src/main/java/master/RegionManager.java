@@ -244,6 +244,7 @@ public class RegionManager{
             String leastRegionName = getLeastRegionName();
             Map<String, Integer> leastTablesInfo = regionsInfo.get(leastRegionName);
             leastTablesInfo.put(tableName, delTablesInfo.get(tableName));
+            //TODO:迁移操作
         }
         update();
         return ResType.DROP_REGION_SUCCESS;

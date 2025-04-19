@@ -265,6 +265,7 @@ public class Master {
     }
 
     // 处理RegionServer连接
+    //TODO:Region Server和master合并在此处
     private static class RegionServerHandler extends Thread {
         private final Socket socket;
 
