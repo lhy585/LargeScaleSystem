@@ -17,7 +17,7 @@ public class ZooKeeperUtils implements Watcher{
 	/**
 	 * 超时时间
 	 */
-	private static final int SESSION_TIME_OUT = 2000;
+	private static final int SESSION_TIME_OUT = 20000000;
 	private CountDownLatch countDownLatch = new CountDownLatch(1);
 	
 	// 构造ZooKeeperUtils对象的时候初始化连接

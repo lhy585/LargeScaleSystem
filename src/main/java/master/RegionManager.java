@@ -32,6 +32,7 @@ public class RegionManager{
      */
     public static void init() throws Exception {
         zooKeeperManager = new ZooKeeperManager();
+        zooKeeperManager.setWatch("/lss/region_server");
         zooKeeperUtils = zooKeeperManager.zooKeeperUtils;
         regionsInfo = getRegionsInfo();
         sortAndUpdate();
@@ -45,12 +46,12 @@ public class RegionManager{
      */
     public static Map<String, Map<String, Integer>> getRegionsInfo() throws Exception {
         Map<String, Map<String, Integer>> newLegionsInfo = new LinkedHashMap<>();
-        List<String> regionNames = zooKeeperUtils.getChildren("/lss/region_servers");//获取下所有Region节点
+        List<String> regionNames = zooKeeperUtils.getChildren("/lss/region_server");//获取下所有Region节点
         for(String regionName : regionNames){//获取节点上的数据
             Map<String, Integer> tablesInfo = new LinkedHashMap<>();
-            List<String> tableNames = zooKeeperUtils.getChildren("/lss/region_servers/" + regionName);
+            List<String> tableNames = zooKeeperUtils.getChildren("/lss/region_server/" + regionName + "/table");
             for(String tableName : tableNames){
-                Integer load = Integer.valueOf(zooKeeperUtils.getData("/lss/region_servers/" + regionName + "table/" + tableName));
+                Integer load = Integer.valueOf(zooKeeperUtils.getData("/lss/region_server/" + regionName + "/table/" + tableName + "/payload"));
                 tablesInfo.put(tableName, load);
             }
             newLegionsInfo.put(regionName, sortLoadDsc(tablesInfo));//给某个region server中的tables排序，按负载降序排序优先处理，
