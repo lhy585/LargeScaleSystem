@@ -13,6 +13,7 @@ import javax.net.ServerSocketFactory;
 import java.io.IOException;
 import java.net.*;
 
+import zookeeper.ZooKeeperManager;
 import zookeeper.ZooKeeperUtils;
 
 
@@ -110,6 +111,13 @@ public class RegionServer {
 
     public static void createZooKeeperNode(ZooKeeperUtils zooKeeperUtils) {
         try {
+            System.out.println("call RegionServer.createZooKeeperNode");
+
+            serverPath = "/lss/region_server";
+            serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + "," + "3306" + ",0";
+
+            zooKeeperUtils.createNode(serverPath, serverValue);
+
             List<String> serverNodes = zooKeeperUtils.getChildren("/lss/region_servers");
 
             int max = 0;
@@ -119,11 +127,6 @@ public class RegionServer {
                     max = index;
                 }
             }
-
-            serverPath = "/lss/region_servers/server_" + (max + 1);
-            serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + "," + "3306" + ",0";
-
-            zooKeeperUtils.createNode(serverPath, serverValue);
 
         } catch(Exception e) {
             System.out.println(e);
@@ -175,8 +178,9 @@ public class RegionServer {
     }
 
     public static void main( String[] args ) throws InterruptedException {
-        ZooKeeperUtils zooKeeperUtils = initRegionServer();
+//        ZooKeeperUtils zooKeeperUtils = initRegionServer();
 
+        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
         threadPoolExecutor.submit(new Runnable() {
             @Override
             public void run() {
@@ -204,6 +208,6 @@ public class RegionServer {
                 break;
             }
         }
-        zooKeeperUtils.closeConnection();
+
     }
 }

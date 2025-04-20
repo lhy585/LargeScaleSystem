@@ -6,7 +6,7 @@ import org.apache.zookeeper.ZooDefs;
 import java.util.List;
 public class ZooKeeperManager {
     public ZooKeeperUtils zooKeeperUtils;
-    public String address="127.0.0.1";
+    public String address="10.162.103.77";
     public String port="2181";
     public ZooKeeperManager(){
         try{
