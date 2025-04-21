@@ -72,8 +72,8 @@ public class RegionServer {
     RegionServer() {
 
     }
-    public static ZooKeeperUtils initRegionServer() {
-        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
+    public static ZooKeeperManager initRegionServer() {
+        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
         System.out.println("init region server");
         connection = JdbcUtils.getConnection("root", "040517cc");
         try {
@@ -85,10 +85,10 @@ public class RegionServer {
         System.out.println("clear mysql data");
         clearMysqlData();
         System.out.println("create zookeeper node");
-        createZooKeeperNode(zooKeeperUtils);
+        createZooKeeperNode(zooKeeperManager);
         System.out.println("create socket and thread pool");
         createSocketAndThreadPool();
-        return zooKeeperUtils;
+        return zooKeeperManager;
     }
     public static void clearMysqlData() {
         if (connection != null && statement != null) {
@@ -109,24 +109,16 @@ public class RegionServer {
         }
     }
 
-    public static void createZooKeeperNode(ZooKeeperUtils zooKeeperUtils) {
+    public static void createZooKeeperNode(ZooKeeperManager zooKeeperManager) {
         try {
             System.out.println("call RegionServer.createZooKeeperNode");
 
             serverPath = "/lss/region_server";
             serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + "," + "3306" + ",0";
 
-            zooKeeperUtils.createNode(serverPath, serverValue);
+            zooKeeperManager.addRegionServer(ip, port, tables, mysqlUser, mysqlPwd, "2182", "3306");
 
-            List<String> serverNodes = zooKeeperUtils.getChildren("/lss/region_servers");
-
-            int max = 0;
-            for (String node : serverNodes) {
-                int index = Integer.valueOf(node.substring(node.indexOf("_") + 1));
-                if (index > max) {
-                    max = index;
-                }
-            }
+            List<String> serverNodes = zooKeeperManager.getRegionServer(serverPath);
 
         } catch(Exception e) {
             System.out.println(e);
@@ -178,8 +170,7 @@ public class RegionServer {
     }
 
     public static void main( String[] args ) throws InterruptedException {
-//        ZooKeeperUtils zooKeeperUtils = initRegionServer();
-
+        // 改成一个线程类
         ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
         threadPoolExecutor.submit(new Runnable() {
             @Override
