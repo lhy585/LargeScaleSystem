@@ -26,24 +26,26 @@ public class App {
             ZooKeeperManager zooKeeperManager1 = new ZooKeeperManager(); //client
             zooKeeperManager1.addRegionServer("1.1.1.2","2182",tableInforms2,"123","123","1234","1234");
             System.out.println(111);
-            System.out.println("table1 is at server ip = "+master.getRegionServer("table1"));
-            System.out.println("table2 is at server ip = "+master.getRegionServer("table2"));
-//            System.out.println("client2 disconnected");
-//            zooKeeperManager1.close();
-//            zooKeeperManager.close();
-            zooKeeperManager.addTable("1.1.1.1",tableInform2);
-            if(zooKeeperManager.accTablePayload("table1")){
-                System.out.println("acc success");
-            }
-            if(zooKeeperManager.accTablePayload("table1")){
-                System.out.println("acc success");
-            }
-            if(zooKeeperManager.accTablePayload("table1")){
-                System.out.println("acc success");
-            }
-            zooKeeperManager.decTablePayload("table1");
-            zooKeeperManager.deleteTable("table2");
-
+//            System.out.println("table1 is at server ip = "+master.getRegionServer("table1"));
+//            System.out.println("table2 is at server ip = "+master.getRegionServer("table2"));
+////            System.out.println("client2 disconnected");
+////            zooKeeperManager1.close();
+////            zooKeeperManager.close();
+//            zooKeeperManager.addTable("1.1.1.1",tableInform2);
+//            if(zooKeeperManager.accTablePayload("table1")){
+//                System.out.println("acc success");
+//            }
+//            if(zooKeeperManager.accTablePayload("table1")){
+//                System.out.println("acc success");
+//            }
+//            if(zooKeeperManager.accTablePayload("table1")){
+//                System.out.println("acc success");
+//            }
+//            zooKeeperManager.decTablePayload("table1");
+//            zooKeeperManager.deleteTable("table2");
+            zooKeeperManager1.setRegionData("1.1.1.2","i am 1.1.1.2");
+            master.setMasterData("1.1.1.2","i am master");
+            master.setMasterData("1.1.1.2","i am master new");
             while(true){
 
             }

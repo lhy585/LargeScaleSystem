@@ -17,7 +17,7 @@ public class ZooKeeperUtils implements Watcher{
 	/**
 	 * 超时时间
 	 */
-	private static final int SESSION_TIME_OUT = 20000000;
+	private static final int SESSION_TIME_OUT = 2000;
 	private CountDownLatch countDownLatch = new CountDownLatch(1);
 	
 	// 构造ZooKeeperUtils对象的时候初始化连接
@@ -51,6 +51,7 @@ public class ZooKeeperUtils implements Watcher{
 				for(int i=0;i<regions.size();i++){
 					System.out.println("set watch path is "+event.getPath()+"/"+regions.get(i)+"/exist");
 					setWatch(event.getPath()+"/"+regions.get(i)+"/exist");
+					setWatch(event.getPath()+"/"+regions.get(i)+"/data");
 				}
 			}
 			catch(Exception e){
@@ -74,6 +75,28 @@ public class ZooKeeperUtils implements Watcher{
 				deleteNodeRecursively("/lss/region_server/"+ip);
 			}
 			catch (Exception e){
+				e.printStackTrace();
+			}
+		}
+		if(event.getType() == Event.EventType.NodeDataChanged ){
+			String ip=event.getPath();
+			ip=ip.substring(ip.indexOf('/')+1);
+			ip=ip.substring(ip.indexOf('/')+1);
+			ip=ip.substring(ip.indexOf('/')+1);
+			ip=ip.substring(0,ip.indexOf('/'));
+			try{
+				String data;
+				if((data=getMasterData(event.getPath()))!=null){
+					//TODO: 地址为ip的region给master发送消息data
+
+				}
+				else{
+					data=getRegionData(event.getPath());
+					//TODO: master给地址为ip的region发送消息data
+
+				}
+			}
+			catch(Exception e){
 				e.printStackTrace();
 			}
 		}
@@ -187,6 +210,54 @@ public class ZooKeeperUtils implements Watcher{
 	public void closeConnection() throws InterruptedException{
 		if (zookeeper != null) {
 			zookeeper.close();
+		}
+	}
+	//从path中取出master的信息。
+	public String getMasterData(String path){
+		try{
+			String data=getData(path);
+			String reserve_data=data.substring(data.indexOf('\n'));
+			data=data.substring(0,data.indexOf('\n'));
+			String label=data.substring(data.indexOf('('),data.indexOf(')'));
+
+
+			data=data.substring(data.indexOf(':')+1);
+			if(label.equals("received")){
+				System.out.println("当前master的信息已接收，不再重复接收");
+				return null;
+			}
+			else{
+				System.out.println("master传递的信息为: "+data);
+				setData(path,"master(received):"+data+reserve_data);
+				return data;
+			}
+		}
+		catch(Exception e){
+			e.printStackTrace();
+			return null;
+		}
+//		return null;
+	}
+	public String getRegionData(String path){
+		try{
+			String data=getData(path);
+			String reserve_data=data.substring(0,data.indexOf('\n'));
+			data=data.substring(data.indexOf('\n')+1);
+			String label=data.substring(data.indexOf('('),data.indexOf(')'));
+			data=data.substring(data.indexOf(':')+1);
+			if(label.equals("received")){
+				System.out.println("当前region的信息已接收，不再重复接收");
+				return null;
+			}
+			else{
+				System.out.println("region传递的信息为: "+data);
+				setData(path,reserve_data+"region(received):"+data);
+				return data;
+			}
+		}
+		catch(Exception e){
+			e.printStackTrace();
+			return null;
 		}
 	}
 

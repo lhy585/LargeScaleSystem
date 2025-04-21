@@ -23,6 +23,8 @@ public class ZooKeeperManager {
         try{
             String name="/lss/region_server/"+ip;
             zooKeeperUtils.createNode(name,ip);
+            String data="master(received):\nregion(received):";
+            zooKeeperUtils.createNode(name + "/data",data);
             zooKeeperUtils.createTempNode(name+"/exist","123");
             zooKeeperUtils.createNode(name+"/port",port);
             zooKeeperUtils.createNode(name+"/password",password);
@@ -30,6 +32,9 @@ public class ZooKeeperManager {
             zooKeeperUtils.createNode(name+"/port2master",port2master);
             zooKeeperUtils.createNode(name+"/port2regionserver",port2regionserver);
             zooKeeperUtils.createNode(name+"/table","");
+
+
+            zooKeeperUtils.setWatch(name + "/data");
             for(int i=0;i< tables.size();i++){
                 zooKeeperUtils.createNode(name+"/table/"+tables.get(i).name,"");
                 zooKeeperUtils.createNode(name+"/table/"+tables.get(i).name+"/payload",tables.get(i).payload.toString());
@@ -164,6 +169,58 @@ public class ZooKeeperManager {
             }
             zooKeeperUtils.setData("/lss/region_server/"+ip+"/table/"+table_name+"/payload",String.valueOf(payload));
             return true;
+        }
+        catch(Exception e){
+            e.printStackTrace();
+            return false;
+        }
+    }
+    //master与ip所表示的regionserver通信时调用此函数，将data写入。
+    public boolean setMasterData(String ip, String new_data){
+        try{
+            String path="/lss/region_server/"+ip+"/data";
+            String data= zooKeeperUtils.getData(path);
+            String reserve_data=data.substring(data.indexOf('\n'));
+            data=data.substring(0,data.indexOf('\n'));
+            String label=data.substring(data.indexOf('('),data.indexOf(')'));
+
+            data=data.substring(data.indexOf(':')+1);
+            if(label.equals("unreceived")){
+                System.out.println("当前master的信息未接收，发送失败");
+                return false;
+            }
+            else{
+                System.out.println("master传递的信息为: "+new_data);
+                zooKeeperUtils.setData(path,"master(unreceived):"+new_data+reserve_data);
+                return true;
+            }
+        }
+        catch(Exception e){
+            e.printStackTrace();
+            return false;
+        }
+//		return false;
+    }
+    //ip所表示的regionserver与master通信时调用此函数，将data写入。
+    public boolean setRegionData(String ip,String new_data){
+        try{
+            String path="/lss/region_server/"+ip+"/data";
+            String data= zooKeeperUtils.getData(path);
+            String reserve_data=data.substring(0,data.indexOf('\n'));
+            data=data.substring(data.indexOf('\n')+1);
+            String label=data.substring(data.indexOf('('),data.indexOf(')'));
+
+
+            data=data.substring(data.indexOf(':')+1);
+            if(label.equals("received")){
+//				System.out.println("当前region的信息未接收，发送失败");
+                return false;
+            }
+            else{
+                System.out.println("region传递的信息为: "+new_data);
+                zooKeeperUtils.setData(path,reserve_data+"\n"+"region(unreceived):"+new_data+"\n");
+                return true;
+            }
         }
         catch(Exception e){
             e.printStackTrace();
