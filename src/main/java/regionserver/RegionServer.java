@@ -16,7 +16,6 @@ import java.net.*;
 import zookeeper.ZooKeeperManager;
 import zookeeper.ZooKeeperUtils;
 
-
 import org.apache.curator.framework.CuratorFramework;
 
 class TableInfo {
@@ -42,13 +41,12 @@ class TableInfo {
     }
 }
 
-public class RegionServer {
+public class RegionServer implements Runnable {
     public static String ip;
     public static String port;
     public static String mysqlUser;
     public static String mysqlPwd;
 
-    //    public static CuratorFramework client = null;
     public static Connection connection = null;
     public static Statement statement = null;
 
@@ -69,9 +67,42 @@ public class RegionServer {
         tables = new ArrayList<>();
     }
 
-    RegionServer() {
+    @Override
+    public void run() {
+        ZooKeeperManager zooKeeperManager = initRegionServer();
 
+        // Start the command listener thread
+        threadPoolExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                Scanner sc = new Scanner(System.in);
+                while(true){
+                    String cmd = sc.nextLine();
+                    if (!cmd.equals("quit")) {
+                        System.out.println(cmd);
+                    } else {
+                        quitSignal = true;
+                        break;
+                    }
+                }
+                sc.close();
+            }
+        });
+
+        // Main server loop
+        while(true) {
+            try {
+                Socket socket = serverSocket.accept();
+                threadPoolExecutor.submit(new ServerThread(socket, statement, tables));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            if (quitSignal){
+                break;
+            }
+        }
     }
+
     public static ZooKeeperManager initRegionServer() {
         ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
         System.out.println("init region server");
@@ -90,6 +121,7 @@ public class RegionServer {
         createSocketAndThreadPool();
         return zooKeeperManager;
     }
+
     public static void clearMysqlData() {
         if (connection != null && statement != null) {
             try {
@@ -167,38 +199,5 @@ public class RegionServer {
             }
         }
         return 0;
-    }
-
-    public static void main( String[] args ) throws InterruptedException {
-        // 改成一个线程类
-        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
-        threadPoolExecutor.submit(new Runnable() {
-            @Override
-            public void run() {
-                Scanner sc = new Scanner(System.in);
-                while(true){
-                    String cmd = sc.nextLine();
-                    if ( !cmd.equals("quit") ) {
-                        System.out.println(cmd);
-                    } else {
-                        quitSignal = true;
-                        break;
-                    }
-                }
-                sc.close();
-            }
-        });
-        while(true) {
-            try {
-                Socket socket = serverSocket.accept();
-                threadPoolExecutor.submit(new ServerThread(socket, statement, tables));
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            if (quitSignal){
-                break;
-            }
-        }
-
     }
 }
