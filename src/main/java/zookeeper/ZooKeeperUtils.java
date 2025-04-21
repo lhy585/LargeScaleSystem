@@ -2,6 +2,8 @@ package zookeeper;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+
+import master.RegionManager;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
@@ -57,7 +59,10 @@ public class ZooKeeperUtils implements Watcher{
 			catch(Exception e){
 				e.printStackTrace();
 			}
+			String ip = "";
+			RegionManager.addRegion(ip);
 			//TODO:在此处调用master的处理新注册的regionserver的函数
+			// 没找到ip
 			//当前所有的regionserver为List<String>regions，仅记录regionserver的ip
 
 		}
@@ -69,8 +74,9 @@ public class ZooKeeperUtils implements Watcher{
 			ip=ip.substring(0,ip.indexOf('/'));
 			System.out.println("Detected a client has disconnected: " + ip);
 			//TODO:在此处调用master的处理regionserver掉线的函数
+			// DONE
 			//掉线的region为ip
-
+			RegionManager.delRegion(ip);
 			try{
 				deleteNodeRecursively("/lss/region_server/"+ip);
 			}

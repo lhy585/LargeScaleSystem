@@ -482,7 +482,7 @@ public class RegionManager{
     }
 
     private static ResType truncateTable(String tableName) {
-        if(zooKeeperManager.decTablePayload(tableName)){//TODO:设置ZooKeeper负载的函数
+        if(zooKeeperManager.setTablePayload(tableName, 0)){
             String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).put(tableName, 0);
             return ResType.TRUNCATE_SUCCESS;

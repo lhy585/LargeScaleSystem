@@ -19,7 +19,7 @@ public class Master {
         System.out.println("[Info]Initializing successfully!");
         // 启动两个监听线程
         new ClientListenerThread(5000).start(); // 监听Client
-        new RegionServerListenerThread(5001).start(); // 监听RegionServer
+        new RegionServerListenerThread(5001).start(); // 监听RegionServer，TODO:测试的话,region server连接到5001端口
     }
 
     // 线程1：监听Clients连接
@@ -46,7 +46,9 @@ public class Master {
     }
 
     // 线程2：监听RegionServers连接
+    //TODO:Region Server和master合并在此处，是处理多个region server的总线程
     private static class RegionServerListenerThread extends Thread {
+        //TODO:一些资源可以保留在private成员内，可能需要保留ip->socket/thread的map
         private final int port;
 
         public RegionServerListenerThread(int port) {
@@ -55,6 +57,7 @@ public class Master {
 
         @Override
         public void run() {
+            //TODO:申请一些资源或初始化
             try (ServerSocket serverSocket = new ServerSocket(port)) {
                 System.out.println("[Info] Listening for region servers on port " + port + "...");
                 while (true) {
@@ -66,6 +69,8 @@ public class Master {
                 e.printStackTrace();
             }
         }
+
+        //TODO:一些涉及到ip的函数应该是写在这里的，在这个region servers的总线程的run()内调用
     }
 
     // 处理Client连接
@@ -265,7 +270,7 @@ public class Master {
     }
 
     // 处理RegionServer连接
-    //TODO:Region Server和master合并在此处
+    // TODO:此处是处理与某一个region server的连接
     private static class RegionServerHandler extends Thread {
         private final Socket socket;
 
@@ -276,8 +281,9 @@ public class Master {
         @Override
         public void run() {
             System.out.println("[Info] New region server connected: " + socket.getInetAddress() + ":" + socket.getPort());
-            // TODO: 在此实现和region server通信
+            // TODO: 在此实现和某一个具体的region server通信
         }
+        //TODO:这里涉及到某个表的删除，拿到表的数据等等，已经是和某一个具体的region server通信了
     }
 
     /**
