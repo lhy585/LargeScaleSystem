@@ -219,12 +219,19 @@ public class RegionManager{
      * 新添加一个region server(我们认为是空的，所以无需记录或传递新region server内的数据）
      * 将其他region server上的数据表匀给该region server上
      */
-    public static ResType addRegion(String addRegionName) {
-        if(regionsInfo.containsKey(addRegionName)){
+    public static ResType addRegion(List<String> nowRegionNames) {
+        String addRegionName = null;
+        for (String regionName : nowRegionNames) {
+            if (!regionsInfo.containsKey(regionName)) {
+                addRegionName = regionName;
+                break;
+            }
+        }
+        if (regionsInfo.containsKey(addRegionName)) {
             return ResType.ADD_REGION_ALREADY_EXISTS;
         }
         sortAndUpdate();
-        Integer avgLoad = getLoadsSum()/(regionsInfo.size()+1);//为它提前考虑
+        Integer avgLoad = getLoadsSum() / (regionsInfo.size() + 1);//为它提前考虑
 
         Map<String, Integer> addTablesInfo = new LinkedHashMap<>();
         Integer addRegionLoadSum = 0;
@@ -232,7 +239,7 @@ public class RegionManager{
             sortAndUpdate();
             String largestRegionName = getLargestRegionName(addTablesInfo);
             Map<String, Integer> largerRegionTables = regionsInfo.get(largestRegionName);
-            if (largerRegionTables == null || largerRegionTables.size() <= 1){// 说明这个region不能再迁了
+            if (largerRegionTables == null || largerRegionTables.size() <= 1) {// 说明这个region不能再迁了
                 break;
             }
             Integer aimLoad = Math.min(avgLoad - addRegionLoadSum, regionsLoad.get(largestRegionName) - avgLoad);
@@ -240,7 +247,7 @@ public class RegionManager{
             String tableNameToMove;
             if (largestTableInfo != null) {
                 tableNameToMove = largestTableInfo.keySet().iterator().next();
-            }else{
+            } else {
                 break;
             }
             Integer tableLoadToMove = largestTableInfo.get(tableNameToMove);

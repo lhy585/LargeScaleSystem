@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 import master.RegionManager;
+import master.ResType;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
@@ -49,21 +50,28 @@ public class ZooKeeperUtils implements Watcher{
 			System.out.println("Detected a client has created: " + event.getPath());
 			try{
 				this.setWatch(event.getPath());
-				List<String>regions= getChildren(event.getPath());
+				List<String> regions = getChildren(event.getPath());
 				for(int i=0;i<regions.size();i++){
 					System.out.println("set watch path is "+event.getPath()+"/"+regions.get(i)+"/exist");
 					setWatch(event.getPath()+"/"+regions.get(i)+"/exist");
 					setWatch(event.getPath()+"/"+regions.get(i)+"/data");
 				}
+				ResType res = RegionManager.addRegion(regions);
+				switch (res){
+					case ADD_REGION_ALREADY_EXISTS:
+						System.out.println("Add region already exists.");
+						break;
+					case ADD_REGION_SUCCESS:
+						System.out.println("Add region successfully.");
+						break;
+					case ADD_REGION_FAILURE:
+						System.out.println("Add region failed.");
+						break;
+				}
 			}
 			catch(Exception e){
 				e.printStackTrace();
 			}
-			String ip = "";
-			RegionManager.addRegion(ip);
-			//TODO:在此处调用master的处理新注册的regionserver的函数
-			// 没找到ip
-			//当前所有的regionserver为List<String>regions，仅记录regionserver的ip
 
 		}
 		if(event.getType() == Event.EventType.NodeDeleted){
@@ -73,9 +81,6 @@ public class ZooKeeperUtils implements Watcher{
 			ip=ip.substring(ip.indexOf('/')+1);
 			ip=ip.substring(0,ip.indexOf('/'));
 			System.out.println("Detected a client has disconnected: " + ip);
-			//TODO:在此处调用master的处理regionserver掉线的函数
-			// DONE
-			//掉线的region为ip
 			RegionManager.delRegion(ip);
 			try{
 				deleteNodeRecursively("/lss/region_server/"+ip);
