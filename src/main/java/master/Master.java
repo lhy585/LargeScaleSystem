@@ -110,7 +110,7 @@ public class Master {
                     Map<String, ResType> res;
                     switch (type) {
                         case CREATE:
-                            res = createTable(tableNames);
+                            res = createTable(tableNames, sql);
                             for(String tableName : tableNames){
                                 if(res.containsKey(tableName) && res.get(tableName)==ResType.CREATE_TABLE_SUCCESS) {
                                     System.out.println("Create Table " + tableName + " successfully");
@@ -203,10 +203,10 @@ public class Master {
         }
 
         // 创建表
-        private static Map<String, ResType> createTable(List<String> tableNames) {
+        private static Map<String, ResType> createTable(List<String> tableNames, String sql) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for(String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.createTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.createTableMasterAndSlave(tableName, sql);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }

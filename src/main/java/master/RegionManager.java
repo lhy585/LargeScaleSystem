@@ -289,7 +289,7 @@ public class RegionManager{
         return ResType.DROP_REGION_SUCCESS;
     }
 
-    public static List<ResType> createTableMasterAndSlave(String tableName) {
+    public static List<ResType> createTableMasterAndSlave(String tableName,String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -312,13 +312,15 @@ public class RegionManager{
 
         if (iterator.hasNext()) {
             String masterRegionName = iterator.next().getKey(); //第一个region server用于存放master
-            res.add(createTable(masterRegionName, tableName));
+            res.add(createTable(masterRegionName, tableName, sql));
         }else{
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
         if (iterator.hasNext()) {
             String slaveRegionName = iterator.next().getKey(); //第二个region server用于存放slave
-            res.add(createTable(slaveRegionName, tableName + "_slave"));
+            String slaveTableName = tableName + "_slave";
+            sql = sql.replace(tableName, slaveTableName);
+            res.add(createTable(slaveRegionName, slaveTableName, sql));
         }else{
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
@@ -326,7 +328,7 @@ public class RegionManager{
         return res;
     }
 
-    private static ResType createTable(String regionName, String tableName) {
+    private static ResType createTable(String regionName, String tableName, String sql) {
         if(zooKeeperManager.addTable(regionName, new TableInform(tableName,0))){
             regionsInfo.get(regionName).put(tableName, 0);
             return ResType.CREATE_TABLE_SUCCESS;
@@ -361,8 +363,8 @@ public class RegionManager{
     }
 
     private static ResType dropTable(String tableName) {
+        String regionName = zooKeeperManager.getRegionServer(tableName);
         if(zooKeeperManager.deleteTable(tableName)) {
-            String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).remove(tableName);
             return ResType.DROP_TABLE_SUCCESS;
         }else{
