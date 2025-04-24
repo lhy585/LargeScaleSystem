@@ -1,28 +1,30 @@
 package regionserver;
+
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+
 public class Client {
     public static void main(String[] args) throws IOException {
-        Socket socket = new Socket("127.0.0.1", 1001);
+        Socket socket = new Socket("127.0.0.1", 5001);
+        System.out.println("Connected to Master");
 
-        // socket 获取字符流
-        BufferedWriter bufferedWriter = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
+        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
         BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        bufferedWriter.write("CONNECT CLIENT");
-        bufferedWriter.newLine();
-        bufferedWriter.flush();
+        BufferedReader userInput = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 
-        //通过标准输入流获取字符流
-        BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        String line;
-        while((line = bufferedReader.readLine()) != null){
-            bufferedWriter.write(line);
-            bufferedWriter.newLine();
-            bufferedWriter.flush();
+        writer.write("REGISTER_REGION_SERVER");
+        writer.newLine();
+        writer.flush();
 
-            String msg = reader.readLine();
-            System.out.println(msg);
+        String sql;
+        while ((sql = userInput.readLine()) != null) {
+            writer.write(sql);
+            writer.newLine();
+            writer.flush();
+
+            String response = reader.readLine();
+            System.out.println("Master response: " + response);
         }
     }
 }

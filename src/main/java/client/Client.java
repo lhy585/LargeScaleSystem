@@ -5,7 +5,7 @@ import java.net.Socket;
 import java.util.Scanner;
 
 public class Client {
-    public static String ip="10.162.126.54";
+    public static String ip="127.0.0.1";
     public static int port=5000;
     public static void main(String[] args) throws Exception {
         String sql;
@@ -30,4 +30,5 @@ public class Client {
             e.printStackTrace();
         }
     }
+    // create table t1(id int, name char(20))
 }

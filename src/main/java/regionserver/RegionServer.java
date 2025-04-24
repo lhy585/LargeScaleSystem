@@ -1,5 +1,8 @@
 package regionserver;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.sql.*;
 import java.util.*;
@@ -13,10 +16,8 @@ import javax.net.ServerSocketFactory;
 import java.io.IOException;
 import java.net.*;
 
+import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
-import zookeeper.ZooKeeperUtils;
-
-import org.apache.curator.framework.CuratorFramework;
 
 class TableInfo {
     public String tableName;
@@ -54,7 +55,7 @@ public class RegionServer implements Runnable {
     public static ThreadPoolExecutor threadPoolExecutor = null;
 
     public static Boolean quitSignal = false;
-    public static ArrayList<TableInfo> tables;
+    public static List<TableInform> tables;
 
     public static String serverPath;
     public static String serverValue;
@@ -63,7 +64,7 @@ public class RegionServer implements Runnable {
         ip = getIPAddress();
         mysqlUser = "root";
         mysqlPwd = "040517cc";
-        port = "1001";
+        port = "5001";
         tables = new ArrayList<>();
     }
 
@@ -71,35 +72,32 @@ public class RegionServer implements Runnable {
     public void run() {
         ZooKeeperManager zooKeeperManager = initRegionServer();
 
-        // Start the command listener thread
-        threadPoolExecutor.submit(new Runnable() {
-            @Override
-            public void run() {
-                Scanner sc = new Scanner(System.in);
-                while(true){
-                    String cmd = sc.nextLine();
-                    if (!cmd.equals("quit")) {
-                        System.out.println(cmd);
-                    } else {
-                        quitSignal = true;
-                        break;
-                    }
-                }
-                sc.close();
-            }
-        });
+        // 主动连接 Master
+        try (Socket masterSocket = new Socket("127.0.0.1", Integer.parseInt(port)); // 连接 Master
+             BufferedReader in = new BufferedReader(new InputStreamReader(masterSocket.getInputStream()));
+             PrintWriter out = new PrintWriter(masterSocket.getOutputStream(), true)) {
 
-        // Main server loop
-        while(true) {
-            try {
-                Socket socket = serverSocket.accept();
-                threadPoolExecutor.submit(new ServerThread(socket, statement, tables));
-            } catch (Exception e) {
-                e.printStackTrace();
+            System.out.println("[RegionServer] Connected to Master!");
+
+            // 发送注册消息
+            out.println("REGISTER_REGION_SERVER");
+            out.flush();
+
+            // 等待 Master 的响应
+            String response = in.readLine();
+            System.out.println("[RegionServer] Master response: " + response);
+
+            // 持续接收 Master 的指令
+            String command;
+            while ((command = in.readLine()) != null) {
+                System.out.println("[RegionServer] Received command: " + command);
+                // 处理 Master 的指令（如 CREATE_TABLE, INSERT_DATA 等）
+                if (command.equals("QUIT")) {
+                    break;
+                }
             }
-            if (quitSignal){
-                break;
-            }
+        } catch (IOException e) {
+            System.err.println("[RegionServer] Failed to connect to Master: " + e.getMessage());
         }
     }
 
@@ -148,9 +146,8 @@ public class RegionServer implements Runnable {
             serverPath = "/lss/region_server";
             serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + "," + "3306" + ",0";
 
-            zooKeeperManager.addRegionServer(ip, port, tables, mysqlUser, mysqlPwd, "2182", "3306");
+            zooKeeperManager.addRegionServer(ip, port, tables, mysqlPwd, mysqlUser, "2182", "3306");
 
-            List<String> serverNodes = zooKeeperManager.getRegionServer(serverPath);
 
         } catch(Exception e) {
             System.out.println(e);
