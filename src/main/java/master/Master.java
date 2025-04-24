@@ -113,76 +113,95 @@ public class Master {
                             res = createTable(tableNames, sql);
                             for(String tableName : tableNames){
                                 if(res.containsKey(tableName) && res.get(tableName)==ResType.CREATE_TABLE_SUCCESS) {
-                                    System.out.println("Create Table " + tableName + " successfully");
+                                    output.println("Create Table " + tableName + " successfully");
                                 }else{
-                                    System.out.println("Create Table " + tableName + " failed");
+                                    output.println("Create Table " + tableName + " failed");
                                 }
                             }
                             break;
                         case DROP:
-                            res = dropTable(tableNames);
+                            res = dropTable(tableNames, sql);
                             for(String tableName : tableNames){
                                 if(res.containsKey(tableName) && res.get(tableName)==ResType.DROP_TABLE_SUCCESS) {
-                                    System.out.println("Drop Table " + tableName + " successfully");
+                                    output.println("Drop Table " + tableName + " successfully");
                                 }else{
-                                    System.out.println("Drop Table " + tableName + " failed");
+                                    output.println("Drop Table " + tableName + " failed");
                                 }
                             }
                             break;
                         case INSERT:
-                            res = insert(tableNames);
+                            res = insert(tableNames, sql);
                             for(String tableName : tableNames){
                                 if(res.containsKey(tableName)){
                                     ResType resType = res.get(tableName);
                                     if(resType==ResType.INSERT_SUCCESS){
-                                        System.out.println("Insert into Table " + tableName + " successfully");
+                                        output.println("Insert into Table " + tableName + " successfully");
                                     }else if(resType==ResType.INSERT_FAILURE){
-                                        System.out.println("Insert into Table " + tableName + " failed");
+                                        output.println("Insert into Table " + tableName + " failed");
                                     }else{
-                                        System.out.println("Insert into Table " + tableName + " doesn't exist");
+                                        output.println("Insert into Table " + tableName + " doesn't exist");
                                     }
                                 }
                             }
                             break;
                         case DELETE:
-                            res = delete(tableNames);
+                            res = delete(tableNames, sql);
                             for(String tableName : tableNames){
                                 if(res.containsKey(tableName)){
                                     ResType resType = res.get(tableName);
                                     if(resType==ResType.DELECT_SUCCESS){
-                                        System.out.println("Delete from Table " + tableName + " successfully");
+                                        output.println("Delete from Table " + tableName + " successfully");
                                     }else if(resType==ResType.DELECT_FAILURE){
-                                        System.out.println("Delete from Table " + tableName + " failed");
+                                        output.println("Delete from Table " + tableName + " failed");
                                     }else{
-                                        System.out.println("Delete from Table " + tableName + " doesn't exist");
+                                        output.println("Delete from Table " + tableName + " doesn't exist");
                                     }
                                 }
                             }
                             break;
                         case UPDATE:
-                        case ALTER:
-                        case SELECT:
-                            res = findTable(tableNames);
+                            res = update(tableNames, sql);
                             for(String tableName : tableNames){
-                                if (res.containsKey(tableName)) {
+                                if(res.containsKey(tableName)){
                                     ResType resType = res.get(tableName);
-                                    if (resType == ResType.FIND_SUCCESS) {
-                                        System.out.println("Find Table " + tableName + " successfully");
-                                    } else {
-                                        System.out.println("Find Table " + tableName + " doesn't exist");
+                                    if(resType==ResType.UPDATE_SUCCESS){
+                                        output.println("Update Table " + tableName + " successfully");
+                                    }else if(resType==ResType.UPDATE_FAILURE){
+                                        output.println("Update Table " + tableName + " failed");
+                                    }else{
+                                        output.println("Update Table " + tableName + " doesn't exist");
                                     }
                                 }
                             }
                             break;
+                        case ALTER:
+                            res = alter(tableNames, sql);
+                            for(String tableName : tableNames){
+                                if(res.containsKey(tableName)){
+                                    ResType resType = res.get(tableName);
+                                    if(resType==ResType.ALTER_SUCCESS){
+                                        output.println("Alter Table " + tableName + " successfully");
+                                    }else if(resType==ResType.ALTER_FAILURE){
+                                        output.println("Alter Table " + tableName + " failed");
+                                    }else{
+                                        output.println("Alter Table " + tableName + " doesn't exist");
+                                    }
+                                }
+                            }
+                            break;
+                        case SELECT:
+                            SelectInfo selectInfo = select(tableNames, sql);
+                            output.println(selectInfo.Serialize());
+                            break;
                         case TRUNCATE:
-                            res = truncate(tableNames);
+                            res = truncate(tableNames, sql);
                             for(String tableName : tableNames){
                                 if (res.containsKey(tableName)) {
                                     ResType resType = res.get(tableName);
                                     if(resType==ResType.TRUNCATE_SUCCESS){
-                                        System.out.println("Truncate Table " + tableName + " successfully");
+                                        output.println("Truncate Table " + tableName + " successfully");
                                     }else{
-                                        System.out.println("Truncate Table " + tableName + " doesn't exist");
+                                        output.println("Truncate Table " + tableName + " doesn't exist");
                                     }
                                 }
                             }
@@ -214,10 +233,10 @@ public class Master {
         }
 
         // 删除表
-        private static Map<String, ResType> dropTable(List<String> tableNames) {
+        private static Map<String, ResType> dropTable(List<String> tableNames, String sql) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for(String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.dropTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.dropTableMasterAndSlave(tableName, sql);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }
@@ -225,10 +244,15 @@ public class Master {
         }
 
         // 插入数据
-        private static Map<String, ResType> insert(List<String> tableNames) {
+        private static SelectInfo select(List<String> tableNames, String sql) {
+            return RegionManager.selectTable(tableNames, sql);
+        }
+
+        // 插入数据
+        private static Map<String, ResType> insert(List<String> tableNames, String sql) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for (String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.accTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.accTableMasterAndSlave(tableName, sql);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }
@@ -236,10 +260,10 @@ public class Master {
         }
 
         // 删除数据
-        private static Map<String, ResType> delete(List<String> tableNames) {
+        private static Map<String, ResType> delete(List<String> tableNames, String sql) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for (String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.decTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.decTableMasterAndSlave(tableName, sql);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }
@@ -247,10 +271,20 @@ public class Master {
         }
 
         // 更新数据
-        private static Map<String, ResType> findTable(List<String> tableNames) {
+        private static Map<String, ResType> update(List<String> tableNames, String sql) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for (String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.findTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.updateTableMasterAndSlave(tableName, sql);
+                res.put(tableName, ansList.get(0));
+                res.put(tableName + "_slave", ansList.get(1));
+            }
+            return res;
+        }
+
+        private static Map<String, ResType> alter(List<String> tableNames, String sql) {
+            Map<String, ResType> res = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                List<ResType> ansList = RegionManager.alterTableMasterAndSlave(tableName, sql);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }
@@ -258,10 +292,10 @@ public class Master {
         }
 
         // 清空数据表数据
-        private static Map<String, ResType> truncate(List<String> tableNames) {
+        private static Map<String, ResType> truncate(List<String> tableNames, String sql) {
             Map<String, ResType> res = new LinkedHashMap<>();
             for (String tableName : tableNames) {
-                List<ResType> ansList = RegionManager.truncateTableMasterAndSlave(tableName);
+                List<ResType> ansList = RegionManager.truncateTableMasterAndSlave(tableName, sql);
                 res.put(tableName, ansList.get(0));
                 res.put(tableName + "_slave", ansList.get(1));
             }

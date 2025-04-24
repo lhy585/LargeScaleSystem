@@ -81,7 +81,18 @@ public class ZooKeeperUtils implements Watcher{
 			ip=ip.substring(ip.indexOf('/')+1);
 			ip=ip.substring(0,ip.indexOf('/'));
 			System.out.println("Detected a client has disconnected: " + ip);
-			RegionManager.delRegion(ip);
+			ResType res = RegionManager.delRegion(ip);
+			switch (res){
+				case DROP_REGION_NO_EXISTS:
+					System.out.println("Del region doesn't exist.");
+					break;
+				case DROP_REGION_SUCCESS:
+					System.out.println("Del region successfully.");
+					break;
+				case DROP_REGION_FAILURE:
+					System.out.println("Del region failed.");
+					break;
+			}
 			try{
 				deleteNodeRecursively("/lss/region_server/"+ip);
 			}
