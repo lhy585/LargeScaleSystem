@@ -24,17 +24,22 @@ public class RegionManager{
     //region name->region load
     public static Map<String, Integer> regionsLoad = null;
 
+    public static List<String> toBeCopiedTable = null;
+
     public static Integer loadsSum = 0, loadsAvg = 0;
+
+    //信息同步，损毁迁移等
 
     /**
      * 初始化，从ZooKeeper处获取nodes数据
-     * TODO:待测试
+     * --测试通过--
      */
     public static void init() throws Exception {
         zooKeeperManager = new ZooKeeperManager();
         zooKeeperManager.setWatch("/lss/region_server");
         zooKeeperUtils = zooKeeperManager.zooKeeperUtils;
         regionsInfo = getRegionsInfo();
+        toBeCopiedTable = new ArrayList<>();
         sortAndUpdate();
         masterInfo = zooKeeperUtils.getData("/lss/master");
     }
@@ -42,7 +47,7 @@ public class RegionManager{
     /**
      * 获取当前所有region node的情况
      * 记录region server下的表名以及表对应的load
-     * TODO:待测试
+     * --测试通过--
      */
     public static Map<String, Map<String, Integer>> getRegionsInfo() throws Exception {
         Map<String, Map<String, Integer>> newLegionsInfo = new LinkedHashMap<>();
@@ -100,6 +105,7 @@ public class RegionManager{
      * --测试通过--
      */
     public static void sortAndUpdate(){
+        regularRecoverData();
         Map<String, Map<String, Integer>> sortedRegionsInfo = new LinkedHashMap<>();
         for(String regionName : regionsInfo.keySet()){
             sortedRegionsInfo.put(regionName, sortLoadDsc(regionsInfo.get(regionName)));
@@ -109,6 +115,37 @@ public class RegionManager{
         loadsSum = getLoadsSum();
         loadsAvg = loadsSum/regionsInfo.size();
     }
+
+    private static void regularRecoverData(){
+        for(String tableName : toBeCopiedTable){
+            String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
+            String slaveTableName = masterTableName + "_slave";
+            List<ResType> checkList = findTableMasterAndSlave(masterTableName);
+            if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS
+                && checkList.get(1) == ResType.FIND_SUCCESS){//母本丢失
+                addSameTable(masterTableName, slaveTableName);
+                toBeCopiedTable.remove(tableName);
+            }else if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){//副本丢失
+                addSameTable(slaveTableName, masterTableName);
+                toBeCopiedTable.remove(tableName);
+            }
+        }
+    }
+
+    private static void addSameTable(String addTableName, String templateTableName){
+        //从被拷贝处取信息
+        String templateRegionName = zooKeeperManager.getRegionServer(templateTableName);
+        Integer load = regionsInfo.get(templateRegionName).get(templateTableName);
+        //新建
+        String addRegionName = getLeastRegionName(templateTableName);
+        regionsInfo.get(addRegionName).put(addTableName, load);
+        //通知ZooKeeper
+        zooKeeperManager.addTable(addRegionName, new TableInform(addTableName,load));
+        sortAndUpdate();
+        //TODO:从slaveRegionName复制表到regionName
+    }
+
+    //region servers均衡策略
 
     /**
      * 排序，按负载降序排序优先处理，
@@ -289,7 +326,11 @@ public class RegionManager{
         return ResType.DROP_REGION_SUCCESS;
     }
 
-    public static List<ResType> createTableMasterAndSlave(String tableName) {
+    /**
+     * 创建新表，同时在不同的region server上创建一份副本
+     *
+     */
+    public static List<ResType> createTableMasterAndSlave(String tableName,String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -304,7 +345,7 @@ public class RegionManager{
         }
         if(res.get(0) == ResType.CREATE_TABLE_ALREADY_EXISTS || res.get(1) == ResType.CREATE_TABLE_ALREADY_EXISTS){
             return res;
-        }else{
+        }else {
             res = new ArrayList<>();
         }
 
@@ -312,30 +353,37 @@ public class RegionManager{
 
         if (iterator.hasNext()) {
             String masterRegionName = iterator.next().getKey(); //第一个region server用于存放master
-            res.add(createTable(masterRegionName, tableName));
+            res.add(createTable(masterRegionName, tableName, sql));
         }else{
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
+        String slaveTableName = tableName + "_slave";
         if (iterator.hasNext()) {
             String slaveRegionName = iterator.next().getKey(); //第二个region server用于存放slave
-            res.add(createTable(slaveRegionName, tableName + "_slave"));
+            sql = sql.replace(tableName, slaveTableName);
+            res.add(createTable(slaveRegionName, slaveTableName, sql));
         }else{
             res.add(ResType.CREATE_TABLE_FAILURE);
+        }
+
+        if(res.get(0) == ResType.CREATE_TABLE_SUCCESS && res.get(1) == ResType.CREATE_TABLE_FAILURE){
+            toBeCopiedTable.add(slaveTableName);
         }
         sortAndUpdate();//更新
         return res;
     }
 
-    private static ResType createTable(String regionName, String tableName) {
+    private static ResType createTable(String regionName, String tableName, String sql) {
         if(zooKeeperManager.addTable(regionName, new TableInform(tableName,0))){
             regionsInfo.get(regionName).put(tableName, 0);
+            //TODO:实际操作sql语句
             return ResType.CREATE_TABLE_SUCCESS;
         }else{
             return ResType.CREATE_TABLE_FAILURE;
         }
     }
 
-    public static List<ResType> dropTableMasterAndSlave(String tableName) {
+    public static List<ResType> dropTableMasterAndSlave(String tableName, String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -348,29 +396,137 @@ public class RegionManager{
         }else{
             res.add(ResType.DROP_TABLE_FAILURE);
         }
-        if(res.get(0) == ResType.DROP_TABLE_NO_EXISTS || res.get(1) == ResType.DROP_TABLE_NO_EXISTS){
+        if(res.get(0) == ResType.DROP_TABLE_NO_EXISTS && res.get(1) == ResType.DROP_TABLE_NO_EXISTS){
             return res;
-        }else{
-            res = new ArrayList<>();
         }
 
-        res.add(dropTable(tableName));
-        res.add(dropTable(tableName + "_slave"));
+        if(res.get(0) == ResType.DROP_TABLE_FAILURE) {
+            res.set(0, dropTable(tableName, sql));
+        }else{
+            toBeCopiedTable.remove(tableName);
+        }
+
+        String slaveTableName = tableName + "_slave";
+        sql = sql.replace(tableName, slaveTableName);
+        if(res.get(1) == ResType.DROP_TABLE_FAILURE) {
+            res.set(1, dropTable(slaveTableName, sql));
+        }else{
+            toBeCopiedTable.remove(slaveTableName);
+        }
+
         sortAndUpdate();//更新
         return res;
     }
 
-    private static ResType dropTable(String tableName) {
+    private static ResType dropTable(String tableName, String sql) {
+        String regionName = zooKeeperManager.getRegionServer(tableName);
         if(zooKeeperManager.deleteTable(tableName)) {
-            String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).remove(tableName);
+            //TODO:实际操作sql语句
             return ResType.DROP_TABLE_SUCCESS;
         }else{
             return ResType.DROP_TABLE_FAILURE;
         }
     }
 
-    public static List<ResType> accTableMasterAndSlave(String tableName) {
+    public static SelectInfo selectTable(List<String> tableNames, String sql) {
+        if(!checkAndRecoverData(tableNames)){
+            return new SelectInfo(false);
+        }
+        Map<String, Integer> regionsWithLoad = getRegionsWithLoad(tableNames);
+        String regionName = getLargestLoadRegion(regionsWithLoad);
+        String retSql = replaceSql(regionName, tableNames, sql);
+        return new SelectInfo(true, regionName, retSql);
+    }
+
+    private static boolean checkAndRecoverData(List<String> tableNames) {
+        for(String tableName : tableNames){
+            String slaveTableName = tableName + "_slave";
+            List<ResType> checkList = findTableMasterAndSlave(tableName);
+            if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS
+                    && checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+                return false;//不可能成功,因为缺表
+            }else if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){//母本丢失
+                //从副本处取信息
+                String slaveRegionName = zooKeeperManager.getRegionServer(slaveTableName);
+                Integer load = regionsInfo.get(slaveRegionName).get(slaveTableName);
+                //新建母本
+                String regionName = getLeastRegionName(slaveTableName);
+                regionsInfo.get(regionName).put(tableName, load);
+                //TODO:从slaveRegionName复制表到regionName
+            }else if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){//副本丢失
+                //从母本处取信息
+                String regionName = zooKeeperManager.getRegionServer(tableName);
+                Integer load = regionsInfo.get(regionName).get(tableName);
+                //新建副本
+                String slaveRegionName = getLeastRegionName(tableName);
+                regionsInfo.get(slaveRegionName).put(slaveTableName, load);
+                //TODO:从regionName复制表到slaveRegionName
+            }
+        }
+        sortAndUpdate();
+        return true;
+    }
+
+    private static Map<String, Integer> getRegionsWithLoad(List<String> tableNames){
+        Map<String, Integer> regionsWithLoad = new LinkedHashMap<>();
+        for(String tableName : tableNames){
+            String regionName = zooKeeperManager.getRegionServer(tableName);
+            if(regionName != null){
+                Integer load = regionsInfo.get(regionName).get(tableName);
+                if(regionsWithLoad.containsKey(regionName)) {
+                    load += regionsWithLoad.get(regionName);
+                }
+                regionsWithLoad.put(regionName, load);
+            }
+
+            String slaveTableName = tableName + "_slave";
+            String slaveRegionName = zooKeeperManager.getRegionServer(slaveTableName);
+            if(slaveRegionName != null && regionName == null) {
+                Integer load = regionsInfo.get(slaveRegionName).get(slaveTableName);
+                if(regionsWithLoad.containsKey(slaveRegionName)) {
+                    load += regionsWithLoad.get(slaveRegionName);
+                }
+                regionsWithLoad.put(slaveRegionName, load);
+            }
+        }
+        return regionsWithLoad;
+    }
+
+    private static String getLargestLoadRegion(Map<String, Integer> regionsWithLoad){
+        Integer maxLoad = 0;
+        String regionName = "";
+        for(Map.Entry<String, Integer> entry : regionsWithLoad.entrySet()){
+            if(entry.getValue() >= maxLoad){
+                maxLoad = entry.getValue();
+                regionName = entry.getKey();
+            }
+        }
+        return regionName;
+    }
+
+    private static String replaceSql(String regionName, List<String> tableNames, String sql) {
+        Map<String, Integer> tables = regionsInfo.get(regionName);
+        for(String tableName : tableNames){
+            String slaveTableName = tableName + "_slave";
+            if(!tables.containsKey(tableName)) {
+                if (tables.containsKey(slaveTableName)) {
+                    sql = sql.replace(tableName, slaveTableName);
+                }else{
+                    String delRegion = zooKeeperManager.getRegionServer(tableName);
+                    Integer load = regionsInfo.get(delRegion).get(tableName);
+                    regionsInfo.get(delRegion).remove(tableName);
+                    zooKeeperManager.deleteTable(tableName);
+                    regionsInfo.get(regionName).put(tableName, load);
+                    zooKeeperManager.addTable(regionName, new TableInform(tableName, load));
+                    //TODO:迁移表
+                }
+            }
+        }
+        return sql;
+    }
+
+    public static List<ResType> accTableMasterAndSlave(String tableName, String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -383,33 +539,36 @@ public class RegionManager{
         }else{
             res.add(ResType.INSERT_FAILURE);
         }
-        if(res.get(0) == ResType.INSERT_TABLE_NO_EXISTS || res.get(1) == ResType.INSERT_TABLE_NO_EXISTS){
+        if(res.get(0) == ResType.INSERT_TABLE_NO_EXISTS && res.get(1) == ResType.INSERT_TABLE_NO_EXISTS){
             return res;
-        }else{
-            res = new ArrayList<>();
         }
 
-        res.add(accTable(tableName));
-        res.add(accTable(tableName + "_slave"));
+        if(res.get(0) == ResType.INSERT_FAILURE) {
+            res.set(0, accTable(tableName, sql));
+        }
+
+        String slaveTableName = tableName + "_slave";
+        sql = sql.replace(tableName, slaveTableName);
+        if(res.get(1) == ResType.INSERT_FAILURE) {
+            res.set(1, accTable(slaveTableName, sql));
+        }
+
         sortAndUpdate();
         return res;
     }
 
-    private static ResType accTable(String tableName) {
+    private static ResType accTable(String tableName, String sql) {
         if(zooKeeperManager.accTablePayload(tableName)){
             String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)+1);
+            //TODO:实际操作sql语句
             return ResType.INSERT_SUCCESS;
         }else{
-            if(zooKeeperManager.getRegionServer(tableName)==null){
-                return ResType.INSERT_TABLE_NO_EXISTS;
-            }else{
-                return ResType.INSERT_FAILURE;
-            }
+            return ResType.INSERT_FAILURE;
         }
     }
 
-    public static List<ResType> decTableMasterAndSlave(String tableName) {
+    public static List<ResType> decTableMasterAndSlave(String tableName, String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -422,30 +581,109 @@ public class RegionManager{
         }else{
             res.add(ResType.DELECT_FAILURE);
         }
-        if(res.get(0) == ResType.DELECT_TABLE_NO_EXISTS || res.get(1) == ResType.DELECT_TABLE_NO_EXISTS){
+        if(res.get(0) == ResType.DELECT_TABLE_NO_EXISTS && res.get(1) == ResType.DELECT_TABLE_NO_EXISTS){
             return res;
-        }else{
-            res = new ArrayList<>();
         }
 
-        res.add(decTable(tableName));
-        res.add(decTable(tableName + "_slave"));
+        if(res.get(0) == ResType.DELECT_FAILURE) {
+            res.set(0, decTable(tableName, sql));
+        }
+
+        String slaveTableName = tableName + "_slave";
+        sql = sql.replace(tableName, slaveTableName);
+        if(res.get(1) == ResType.DELECT_FAILURE) {
+            res.set(1, decTable(slaveTableName, sql));
+        }
+
         sortAndUpdate();
         return res;
     }
 
-    private static ResType decTable(String tableName) {
+    private static ResType decTable(String tableName, String sql) {
         if(zooKeeperManager.decTablePayload(tableName)){
             String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)-1);
+            //TODO:实际操作sql语句
             return ResType.DELECT_SUCCESS;
         }else{
-            if(zooKeeperManager.getRegionServer(tableName)==null){
-                return ResType.DELECT_TABLE_NO_EXISTS;
-            }else{
-                return ResType.DELECT_FAILURE;
-            }
+            return ResType.DELECT_FAILURE;
         }
+    }
+
+    public static List<ResType> updateTableMasterAndSlave(String tableName, String sql) {
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
+        List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.UPDATE_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.UPDATE_FAILURE);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.UPDATE_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.UPDATE_FAILURE);
+        }
+        if(res.get(0) == ResType.UPDATE_TABLE_NO_EXISTS && res.get(1) == ResType.UPDATE_TABLE_NO_EXISTS){
+            return res;
+        }
+
+        if(res.get(0) == ResType.UPDATE_FAILURE) {
+            res.set(0, updateTable(tableName, sql));
+        }
+
+        String slaveTableName = tableName + "_slave";
+        sql = sql.replace(tableName, slaveTableName);
+        if(res.get(1) == ResType.UPDATE_FAILURE) {
+            res.set(1, updateTable(slaveTableName, sql));
+        }
+
+        sortAndUpdate();
+        return res;
+    }
+
+    private static ResType updateTable(String tableName, String sql) {
+        String regionName = zooKeeperManager.getRegionServer(tableName);
+        regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)-1);
+        //TODO:实际操作sql语句
+        return ResType.UPDATE_SUCCESS;
+    }
+
+    public static List<ResType> alterTableMasterAndSlave(String tableName, String sql) {
+        List<ResType> checkList = findTableMasterAndSlave(tableName);
+        List<ResType> res = new ArrayList<>();
+        if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.ALTER_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.ALTER_FAILURE);
+        }
+        if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
+            res.add(ResType.ALTER_TABLE_NO_EXISTS);
+        }else{
+            res.add(ResType.ALTER_FAILURE);
+        }
+        if(res.get(0) == ResType.ALTER_TABLE_NO_EXISTS && res.get(1) == ResType.ALTER_TABLE_NO_EXISTS){
+            return res;
+        }
+
+        if(res.get(0) == ResType.ALTER_FAILURE) {
+            res.set(0, alterTable(tableName, sql));
+        }
+
+        String slaveTableName = tableName + "_slave";
+        sql = sql.replace(tableName, slaveTableName);
+        if(res.get(1) == ResType.ALTER_FAILURE) {
+            res.set(1, alterTable(slaveTableName, sql));
+        }
+
+        sortAndUpdate();
+        return res;
+    }
+
+    private static ResType alterTable(String tableName, String sql) {
+        String regionName = zooKeeperManager.getRegionServer(tableName);
+        regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)-1);
+        //TODO:实际操作sql语句
+        return ResType.ALTER_SUCCESS;
     }
 
     public static List<ResType> findTableMasterAndSlave(String tableName) {
@@ -463,7 +701,7 @@ public class RegionManager{
         }
     }
 
-    public static List<ResType> truncateTableMasterAndSlave(String tableName) {
+    public static List<ResType> truncateTableMasterAndSlave(String tableName, String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -476,29 +714,31 @@ public class RegionManager{
         }else{
             res.add(ResType.TRUNCATE_FAILURE);
         }
-        if(res.get(0) == ResType.TRUNCATE_TABLE_NO_EXISTS || res.get(1) == ResType.TRUNCATE_TABLE_NO_EXISTS){
+        if(res.get(0) == ResType.TRUNCATE_TABLE_NO_EXISTS && res.get(1) == ResType.TRUNCATE_TABLE_NO_EXISTS){
             return res;
-        }else{
-            res = new ArrayList<>();
         }
 
-        res.add(truncateTable(tableName));
-        res.add(truncateTable(tableName + "_slave"));
+        if(res.get(0) == ResType.TRUNCATE_FAILURE) {
+            res.set(0, truncateTable(tableName, sql));
+        }
+
+        String slaveTableName = tableName + "_slave";
+        sql = sql.replace(tableName, slaveTableName);
+        if(res.get(1) == ResType.TRUNCATE_FAILURE) {
+            res.set(1, truncateTable(slaveTableName, sql));
+        }
         sortAndUpdate();
         return res;
     }
 
-    private static ResType truncateTable(String tableName) {
+    private static ResType truncateTable(String tableName, String sql) {
         if(zooKeeperManager.setTablePayload(tableName, 0)){
             String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).put(tableName, 0);
+            //TODO:实际操作sql语句
             return ResType.TRUNCATE_SUCCESS;
         }else{
-            if(zooKeeperManager.getRegionServer(tableName)==null){
-                return ResType.TRUNCATE_TABLE_NO_EXISTS;
-            }else{
-                return ResType.TRUNCATE_FAILURE;
-            }
+            return ResType.TRUNCATE_FAILURE;
         }
     }
 }
