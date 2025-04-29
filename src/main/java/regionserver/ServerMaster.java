@@ -383,76 +383,64 @@ public class ServerMaster {
     }
 
     /**
-     * 将表从一个服务器迁移到另一个服务器
-     * @param sourceServerName 源服务器名称
-     * @param sourceIp 源服务器IP
-     * @param sourcePort 源服务器端口
-     * @param sourceUser 源服务器用户名
-     * @param sourcePwd 源服务器密码
+     * 迁移表到新的region server
+     * @param sourceRegionName 源region名称
+     * @param targetRegionName 目标region名称
      * @param tableName 要迁移的表名
+     * @return 是否迁移成功
      */
-    // TODO: 迁移到目标服务器 需要另一个服务器的名称等
-    public static void migrateTable(String sourceServerName, String sourceIp, String sourcePort,
-                                    String sourceUser, String sourcePwd, String tableName) {
-        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
+    public static boolean migrateTable(String sourceRegionName, String targetRegionName, String tableName) {
+        try {
+            ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
 
-        // 从源服务器导出表
-        JdbcUtils.dumpRemoteSql(tableName, sourceIp, sourceUser, sourcePwd);
-        File file = new File("./sql/lss." + tableName + ".sql");
+            // 1. 从源region server导出表数据
+            String sourceServerPath = "/lss/region_servers/" + sourceRegionName;
+            String sourceServerInfo = zooKeeperUtils.getData(sourceServerPath);
+            String[] sourceInfo = sourceServerInfo.split(",");
 
-        if (file.exists()) {
-            // 在本地创建表
-            String[] mysqlCmd = {
-                    "mysql",
-                    "-u", RegionServer.mysqlUser,
-                    "-h", "localhost",
-                    "-p" + RegionServer.mysqlPwd,
-                    "-e", "source ./sql/lss." + tableName + ".sql"
-            };
+            JdbcUtils.dumpRemoteSql(tableName, sourceInfo[1], sourceInfo[3], sourceInfo[4]);
+            File file = new File("./sql/lss." + tableName + ".sql");
 
-            try {
-                ProcessBuilder pb = new ProcessBuilder(mysqlCmd);
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-                int exitCode = process.waitFor();
-
-                if (exitCode != 0) {
-                    System.out.println("创建迁移表失败");
-                    return;
-                }
-
-                // 更新ZooKeeper - 添加到当前服务器
-                String serverPath = RegionServer.serverPath;
-                String currentValue = zooKeeperUtils.getData(serverPath);
-                if (currentValue != null) {
-                    String newValue = addTable(currentValue, tableName);
-                    zooKeeperUtils.setData(serverPath, newValue);
-                }
-
-                // 从源服务器删除表
-                Connection connection = JdbcUtils.getConnection(
-                        sourceIp, sourceUser, sourcePwd);
-                if (connection != null) {
-                    try (Statement statement = connection.createStatement()) {
-                        statement.execute("DROP TABLE IF EXISTS " + tableName);
-                    } finally {
-                        JdbcUtils.releaseResc(null, null, connection);
-                    }
-                }
-
-                // 更新ZooKeeper - 从源服务器删除表
-                String sourceServerPath = "/lss/region_servers/" + sourceServerName;
-                String sourceNodeData = zooKeeperUtils.getData(sourceServerPath);
-                if (sourceNodeData != null) {
-                    String newSourceValue = deleteTable(sourceNodeData, tableName);
-                    zooKeeperUtils.setData(sourceServerPath, newSourceValue);
-                }
-            } catch (Exception e) {
-                System.out.println("表迁移过程中出错: " + e.getMessage());
-                e.printStackTrace();
+            if (!file.exists()) {
+                System.out.println("创建副本失败: 导出文件不存在");
+                return false;
             }
-        } else {
-            System.out.println("创建表导出文件失败");
+
+            // 2. 在目标region server创建表
+            String targetServerPath = "/lss/region_servers/" + targetRegionName;
+            String targetServerInfo = zooKeeperUtils.getData(targetServerPath);
+            String[] targetInfo = targetServerInfo.split(",");
+
+            String createCmd = "mysql -u " + targetInfo[3] +
+                    " -h " + "localhost" +
+                    " -p" + targetInfo[4] +
+                    " < ./sql/lss." + tableName + ".sql";
+
+            Runtime rt = Runtime.getRuntime();
+            rt.exec("cmd /c " + createCmd);
+
+            // 3. 更新zookeeper节点
+            // 在目标region添加表
+            String newTargetValue = addTable(targetServerInfo, tableName);
+            zooKeeperUtils.setData(targetServerPath, newTargetValue);
+
+            // 在源region删除表
+            String newSourceValue = deleteTable(sourceServerInfo, tableName);
+            zooKeeperUtils.setData(sourceServerPath, newSourceValue);
+
+            // 4. 从源region server删除表
+            Connection connection = JdbcUtils.getConnection(sourceInfo[1], sourceInfo[3], sourceInfo[4]);
+            if (connection != null) {
+                Statement statement = connection.createStatement();
+                statement.execute("drop table if exists " + tableName);
+                JdbcUtils.releaseResc(null, statement, connection);
+            }
+
+            return true;
+        } catch (Exception e) {
+            System.out.println("迁移表失败: " + e.getMessage());
+            e.printStackTrace();
+            return false;
         }
     }
 

@@ -56,7 +56,8 @@ public class SqlSocket {
      */
     public void parseSql(String sql) {
         try {
-            System.out.println("    Request is: \" " + sql + " \"");
+            if (sql.contains("REGISTER"))return;
+            System.out.println("Request is: \" " + sql + " \"");
             Statement statement = CCJSqlParserUtil.parse(sql);
             SqlType type;
             TablesNamesFinder tablesNamesFinder = new TablesNamesFinder();

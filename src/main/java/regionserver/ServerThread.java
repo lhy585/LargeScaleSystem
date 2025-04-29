@@ -163,14 +163,6 @@ public class ServerThread implements Runnable {
                             if (migrateParams.length == 2) {
                                 String[] serverInfo = migrateParams[1].split(":");
                                 if (serverInfo.length >= 4) {
-                                    ServerMaster.migrateTable(
-                                            migrateParams[0], // sourceServerName
-                                            serverInfo[0],   // ip
-                                            serverInfo[1],    // port
-                                            serverInfo[2],    // user
-                                            serverInfo[3],    // password
-                                            parts.length > 2 ? parts[2] : "" // tableName
-                                    );
                                     reactCmd(true, "表迁移请求已接收");
                                 }
                             }

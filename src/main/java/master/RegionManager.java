@@ -8,10 +8,15 @@ package master;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.sql.*;
 
+import regionserver.ServerClient;
+import regionserver.ServerMaster;
 import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
 import zookeeper.ZooKeeperUtils;
+
+import static regionserver.ServerMaster.migrateTable;
 
 public class RegionManager{
     public static ZooKeeperManager zooKeeperManager;
@@ -112,33 +117,52 @@ public class RegionManager{
         loadsSum = getLoadsSum();
         loadsAvg = loadsSum/regionsInfo.size();
     }
-    private static void regularRecoverData(){
-        for(String tableName : toBeCopiedTable){
+    private static void regularRecoverData() {
+        // 使用临时列表处理，避免修改正在遍历的列表
+        List<String> tempList = new ArrayList<>(toBeCopiedTable);
+        for (String tableName : tempList) {
             String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
             String slaveTableName = masterTableName + "_slave";
             List<ResType> checkList = findTableMasterAndSlave(masterTableName);
-            if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS
-                    && checkList.get(1) == ResType.FIND_SUCCESS){//母本丢失
+            if (checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS && checkList.get(1) == ResType.FIND_SUCCESS) { // 母本丢失
                 addSameTable(masterTableName, slaveTableName);
                 toBeCopiedTable.remove(tableName);
-            }else if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){//副本丢失
+            } else if (checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS) { // 副本丢失
                 addSameTable(slaveTableName, masterTableName);
                 toBeCopiedTable.remove(tableName);
             }
         }
     }
 
-    private static void addSameTable(String addTableName, String templateTableName){
-        //从被拷贝处取信息
+    private static void addSameTable(String addTableName, String templateTableName) {
+        // 从被拷贝处取信息
         String templateRegionName = zooKeeperManager.getRegionServer(templateTableName);
+        if (templateRegionName == null) {
+            System.err.println("Template region not found for table: " + templateTableName);
+            return;
+        }
         Integer load = regionsInfo.get(templateRegionName).get(templateTableName);
-        //新建
+        // 新建
         String addRegionName = getLeastRegionName(templateTableName);
-        regionsInfo.get(addRegionName).put(addTableName, load);
-        //通知ZooKeeper
-        zooKeeperManager.addTable(addRegionName, new TableInform(addTableName,load));
-        sortAndUpdate();
-        //TODO:从slaveRegionName复制表到regionName
+        if (addRegionName == null) {
+            System.err.println("No suitable region found to add table: " + addTableName);
+            return;
+        }
+        // 直接添加表到目标region，不依赖ZooKeeper的实时数据
+        regionsInfo.computeIfAbsent(addRegionName, k -> new LinkedHashMap<>()).put(addTableName, load);
+        // 通知ZooKeeper
+        zooKeeperManager.addTable(addRegionName, new TableInform(addTableName, load));
+        // 执行数据迁移
+        boolean migrationSuccess = ServerMaster.migrateTable(templateRegionName, addRegionName, addTableName);
+        if (migrationSuccess) {
+            // 更新本地缓存
+            regionsInfo.get(templateRegionName).remove(templateTableName);
+            sortAndUpdate();
+        } else {
+            System.err.println("Failed to migrate table: " + addTableName + " from " + templateRegionName + " to " + addRegionName);
+            // 回滚操作，如果迁移失败，需要回滚
+            regionsInfo.get(addRegionName).remove(addTableName);
+        }
     }
 
     //region servers均衡策略
@@ -264,35 +288,44 @@ public class RegionManager{
             return ResType.ADD_REGION_ALREADY_EXISTS;
         }
         sortAndUpdate();
-        Integer avgLoad = getLoadsSum() / (regionsInfo.size() + 1);//为它提前考虑
+        Integer avgLoad = regionsInfo.isEmpty() ? 0 : getLoadsSum() / (regionsInfo.size() + 1); // 为它提前考虑
 
         Map<String, Integer> addTablesInfo = new LinkedHashMap<>();
         Integer addRegionLoadSum = 0;
-        while (addRegionLoadSum < avgLoad) {
+        while (addRegionLoadSum < avgLoad && !regionsInfo.isEmpty()) {
             sortAndUpdate();
             String largestRegionName = getLargestRegionName(addTablesInfo);
+            if (largestRegionName == null) {
+                break;
+            }
             Map<String, Integer> largerRegionTables = regionsInfo.get(largestRegionName);
-            if (largerRegionTables == null || largerRegionTables.size() <= 1) {// 说明这个region不能再迁了
+            if (largerRegionTables == null || largerRegionTables.isEmpty()) {
                 break;
             }
             Integer aimLoad = Math.min(avgLoad - addRegionLoadSum, regionsLoad.get(largestRegionName) - avgLoad);
             Map<String, Integer> largestTableInfo = getLargerTableInfo(largestRegionName, aimLoad, addTablesInfo);
             String tableNameToMove;
-            if (largestTableInfo != null) {
+            if (largestTableInfo != null && !largestTableInfo.isEmpty()) {
                 tableNameToMove = largestTableInfo.keySet().iterator().next();
             } else {
                 break;
             }
             Integer tableLoadToMove = largestTableInfo.get(tableNameToMove);
 
-            // TODO: 这里写迁移逻辑，把表从largestRegion迁到targetRegion
+            // 执行迁移逻辑，把表从largestRegion迁到targetRegion
+            boolean migrationSuccess = migrateTable(largestRegionName, addRegionName, tableNameToMove);
 
-            //处理表迁出的region server
-            largerRegionTables.remove(tableNameToMove);
-            regionsInfo.put(largestRegionName, largerRegionTables);
-            //处理表迁入的region server
-            addRegionLoadSum += tableLoadToMove;
-            addTablesInfo.put(tableNameToMove, tableLoadToMove);
+            if (migrationSuccess) {
+                // 处理表迁出的region server
+                largerRegionTables.remove(tableNameToMove);
+                regionsInfo.put(largestRegionName, largerRegionTables);
+                // 处理表迁入的region server
+                addRegionLoadSum += tableLoadToMove;
+                addTablesInfo.put(tableNameToMove, tableLoadToMove);
+            } else {
+                System.err.println("Failed to migrate table: " + tableNameToMove + " from " + largestRegionName + " to " + addRegionName);
+                break;
+            }
         }
         regionsInfo.put(addRegionName, addTablesInfo);
         sortAndUpdate();
@@ -313,10 +346,18 @@ public class RegionManager{
             sortAndUpdate();
             String leastRegionName = getLeastRegionName(tableName);//防止同一region server存储了母本和副本
             Map<String, Integer> leastTablesInfo = regionsInfo.get(leastRegionName);
+            Integer load = regionsInfo.get(delRegionName).get(tableName);
             Integer tableLoad = delTablesInfo.get(tableName);
             leastTablesInfo.put(tableName, tableLoad);
             regionsInfo.put(leastRegionName, leastTablesInfo);
-            //TODO:迁移操作
+            boolean migrationSuccess = ServerMaster.migrateTable(delRegionName, leastRegionName, tableName);
+            if (!migrationSuccess) {
+                // 如果迁移失败，回滚操作
+                regionsInfo.get(leastRegionName).remove(tableName);
+                zooKeeperManager.addTable(delRegionName, new TableInform(tableName, load));
+                regionsInfo.get(delRegionName).put(tableName, load);
+                return ResType.DROP_REGION_FAILURE; // 返回未替换的SQL
+            }
         }
         sortAndUpdate();
         return ResType.DROP_REGION_SUCCESS;
@@ -370,14 +411,24 @@ public class RegionManager{
     }
 
     private static ResType createTable(String regionName, String tableName, String sql) {
-        if(zooKeeperManager.addTable(regionName, new TableInform(tableName,0))){
-            regionsInfo.get(regionName).put(tableName, 0);
-            //TODO:实际操作sql语句
-            return ResType.CREATE_TABLE_SUCCESS;
-        }else{
+        System.out.println("call createTable: " + regionName + " " + tableName);
+        if (zooKeeperManager.addTable(regionName, new TableInform(tableName, 0))) {
+            regionsInfo.computeIfAbsent(regionName, k -> new LinkedHashMap<>()).put(tableName, 0);
+            // TODO: 实际操作sql语句
+            boolean success = ServerClient.createTable(sql); // 调用ServerMaster的createTable方法
+            if (success) {
+                return ResType.CREATE_TABLE_SUCCESS;
+            } else {
+                // 如果创建失败，需要回滚ZooKeeper中的记录
+                zooKeeperManager.deleteTable(tableName);
+                regionsInfo.get(regionName).remove(tableName);
+                return ResType.CREATE_TABLE_FAILURE;
+            }
+        } else {
             return ResType.CREATE_TABLE_FAILURE;
         }
     }
+
 
     public static List<ResType> dropTableMasterAndSlave(String tableName, String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
@@ -414,16 +465,30 @@ public class RegionManager{
         return res;
     }
 
-    private static ResType dropTable(String tableName, String sql) {
+    public static ResType dropTable(String tableName, String sql) {
         String regionName = zooKeeperManager.getRegionServer(tableName);
-        if(zooKeeperManager.deleteTable(tableName)) {
-            regionsInfo.get(regionName).remove(tableName);
-            //TODO:实际操作sql语句
-            return ResType.DROP_TABLE_SUCCESS;
-        }else{
+        if (regionName == null) {
+            return ResType.DROP_TABLE_NO_EXISTS;
+        }
+
+        // 删除本地表
+        boolean success = ServerClient.dropTable(tableName); // 调用ServerClient的dropTable方法
+        if (success) {
+            // 更新ZooKeeper节点
+            if (zooKeeperManager.deleteTable(tableName)) {
+                regionsInfo.get(regionName).remove(tableName);
+                sortAndUpdate();
+                return ResType.DROP_TABLE_SUCCESS;
+            } else {
+                // 如果ZooKeeper删除失败，需要回滚本地删除
+                regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).getOrDefault(tableName, 0));
+                return ResType.DROP_TABLE_FAILURE;
+            }
+        } else {
             return ResType.DROP_TABLE_FAILURE;
         }
     }
+
     public static SelectInfo selectTable(List<String> tableNames, String sql) {
         if(!checkAndRecoverData(tableNames)){
             return new SelectInfo(false);
@@ -435,28 +500,52 @@ public class RegionManager{
     }
 
     private static boolean checkAndRecoverData(List<String> tableNames) {
-        for(String tableName : tableNames){
+        for (String tableName : tableNames) {
             String slaveTableName = tableName + "_slave";
             List<ResType> checkList = findTableMasterAndSlave(tableName);
-            if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS
-                    && checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
-                return false;//不可能成功,因为缺表
-            }else if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){//母本丢失
-                //从副本处取信息
+            if (checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS
+                    && checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS) {
+                return false; // 不可能成功，因为缺表
+            } else if (checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS) { // 母本丢失
+                // 从副本处取信息
                 String slaveRegionName = zooKeeperManager.getRegionServer(slaveTableName);
+                if (slaveRegionName == null) {
+                    return false; // 副本也不存在
+                }
                 Integer load = regionsInfo.get(slaveRegionName).get(slaveTableName);
-                //新建母本
+                // 新建母本
                 String regionName = getLeastRegionName(slaveTableName);
-                regionsInfo.get(regionName).put(tableName, load);
-                //TODO:从slaveRegionName复制表到regionName
-            }else if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){//副本丢失
-                //从母本处取信息
+                if (regionName == null) {
+                    return false; // 没有合适的region
+                }
+                regionsInfo.computeIfAbsent(regionName, k -> new LinkedHashMap<>()).put(tableName, load);
+                // TODO: 从slaveRegionName复制表到regionName
+                boolean migrationSuccess = ServerMaster.migrateTable(slaveRegionName, regionName, tableName);
+                if (!migrationSuccess) {
+                    // 如果迁移失败，回滚操作
+                    regionsInfo.get(regionName).remove(tableName);
+                    return false;
+                }
+            } else if (checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS) { // 副本丢失
+                // 从母本处取信息
                 String regionName = zooKeeperManager.getRegionServer(tableName);
+                if (regionName == null) {
+                    return false; // 母本也不存在
+                }
                 Integer load = regionsInfo.get(regionName).get(tableName);
-                //新建副本
+                // 新建副本
                 String slaveRegionName = getLeastRegionName(tableName);
-                regionsInfo.get(slaveRegionName).put(slaveTableName, load);
-                //TODO:从regionName复制表到slaveRegionName
+                if (slaveRegionName == null) {
+                    return false; // 没有合适的region
+                }
+                regionsInfo.computeIfAbsent(slaveRegionName, k -> new LinkedHashMap<>()).put(slaveTableName, load);
+                // TODO: 从regionName复制表到slaveRegionName
+                boolean migrationSuccess = ServerMaster.migrateTable(regionName, slaveRegionName, slaveTableName);
+                if (!migrationSuccess) {
+                    // 如果迁移失败，回滚操作
+                    regionsInfo.get(slaveRegionName).remove(slaveTableName);
+                    return false;
+                }
             }
         }
         sortAndUpdate();
@@ -502,19 +591,32 @@ public class RegionManager{
 
     private static String replaceSql(String regionName, List<String> tableNames, String sql) {
         Map<String, Integer> tables = regionsInfo.get(regionName);
-        for(String tableName : tableNames){
+        for (String tableName : tableNames) {
             String slaveTableName = tableName + "_slave";
-            if(!tables.containsKey(tableName)) {
+            if (!tables.containsKey(tableName)) {
                 if (tables.containsKey(slaveTableName)) {
                     sql = sql.replace(tableName, slaveTableName);
-                }else{
+                } else {
                     String delRegion = zooKeeperManager.getRegionServer(tableName);
-                    Integer load = regionsInfo.get(delRegion).get(tableName);
-                    regionsInfo.get(delRegion).remove(tableName);
-                    zooKeeperManager.deleteTable(tableName);
-                    regionsInfo.get(regionName).put(tableName, load);
-                    zooKeeperManager.addTable(regionName, new TableInform(tableName, load));
-                    //TODO:迁移表
+                    if (delRegion != null) {
+                        Integer load = regionsInfo.get(delRegion).get(tableName);
+                        regionsInfo.get(delRegion).remove(tableName);
+                        zooKeeperManager.deleteTable(tableName);
+                        regionsInfo.get(regionName).put(tableName, load);
+                        zooKeeperManager.addTable(regionName, new TableInform(tableName, load));
+                        // TODO: 迁移表
+                        boolean migrationSuccess = ServerMaster.migrateTable(delRegion, regionName, tableName);
+                        if (!migrationSuccess) {
+                            // 如果迁移失败，回滚操作
+                            regionsInfo.get(regionName).remove(tableName);
+                            zooKeeperManager.addTable(delRegion, new TableInform(tableName, load));
+                            regionsInfo.get(delRegion).put(tableName, load);
+                            return sql; // 返回未替换的SQL
+                        }
+                    } else {
+                        // 如果原region不存在，可以选择报错或跳过
+                        // 这里选择跳过，继续处理其他表
+                    }
                 }
             }
         }
@@ -553,12 +655,19 @@ public class RegionManager{
     }
 
     private static ResType accTable(String tableName, String sql) {
-        if(zooKeeperManager.accTablePayload(tableName)){
+        if (zooKeeperManager.accTablePayload(tableName)) {
             String regionName = zooKeeperManager.getRegionServer(tableName);
-            regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)+1);
-            //TODO:实际操作sql语句
-            return ResType.INSERT_SUCCESS;
-        }else{
+            regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName) + 1);
+            // TODO: 实际操作sql语句
+            boolean success = ServerClient.executeCmd(sql); // 调用ServerClient的executeUpdate方法
+            if (success) {
+                return ResType.INSERT_SUCCESS;
+            } else {
+                // 回滚操作
+                regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName) - 1);
+                return ResType.INSERT_FAILURE;
+            }
+        } else {
             return ResType.INSERT_FAILURE;
         }
     }
@@ -595,12 +704,19 @@ public class RegionManager{
     }
 
     private static ResType decTable(String tableName, String sql) {
-        if(zooKeeperManager.decTablePayload(tableName)){
+        if (zooKeeperManager.decTablePayload(tableName)) {
             String regionName = zooKeeperManager.getRegionServer(tableName);
-            regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)-1);
-            //TODO:实际操作sql语句
-            return ResType.DELECT_SUCCESS;
-        }else{
+            regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName) - 1);
+            // TODO: 实际操作sql语句
+            boolean success = ServerClient.executeCmd(sql); // 调用ServerClient的executeUpdate方法
+            if (success) {
+                return ResType.DELECT_SUCCESS;
+            } else {
+                // 回滚操作
+                regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName) + 1);
+                return ResType.DELECT_FAILURE;
+            }
+        } else {
             return ResType.DELECT_FAILURE;
         }
     }
@@ -638,9 +754,20 @@ public class RegionManager{
 
     private static ResType updateTable(String tableName, String sql) {
         String regionName = zooKeeperManager.getRegionServer(tableName);
-        regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)-1);
-        //TODO:实际操作sql语句
-        return ResType.UPDATE_SUCCESS;
+        Integer currentLoad = regionsInfo.get(regionName).get(tableName);
+        if (currentLoad == null || currentLoad <= 0) {
+            return ResType.UPDATE_FAILURE; // 表不存在或负载无效
+        }
+        regionsInfo.get(regionName).put(tableName, currentLoad - 1);
+        // TODO: 实际操作sql语句
+        boolean success = ServerClient.executeCmd(sql); // 调用ServerClient的executeUpdate方法
+        if (success) {
+            return ResType.UPDATE_SUCCESS;
+        } else {
+            // 回滚操作
+            regionsInfo.get(regionName).put(tableName, currentLoad);
+            return ResType.UPDATE_FAILURE;
+        }
     }
 
     public static List<ResType> alterTableMasterAndSlave(String tableName, String sql) {
@@ -674,11 +801,22 @@ public class RegionManager{
         return res;
     }
 
-    private static ResType alterTable(String tableName, String sql) {
+    public static ResType alterTable(String tableName, String sql) {
         String regionName = zooKeeperManager.getRegionServer(tableName);
-        regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).get(tableName)-1);
-        //TODO:实际操作sql语句
-        return ResType.ALTER_SUCCESS;
+        Integer currentLoad = regionsInfo.get(regionName).get(tableName);
+        if (currentLoad == null || currentLoad <= 0) {
+            return ResType.ALTER_FAILURE; // 表不存在或负载无效
+        }
+        regionsInfo.get(regionName).put(tableName, currentLoad - 1);
+        // TODO: 实际操作sql语句
+        boolean success = ServerClient.executeCmd(sql); // 调用ServerClient的executeUpdate方法
+        if (success) {
+            return ResType.ALTER_SUCCESS;
+        } else {
+            // 回滚操作
+            regionsInfo.get(regionName).put(tableName, currentLoad);
+            return ResType.ALTER_FAILURE;
+        }
     }
 
     public static List<ResType> findTableMasterAndSlave(String tableName) {
@@ -727,12 +865,20 @@ public class RegionManager{
     }
 
     private static ResType truncateTable(String tableName, String sql) {
-        if(zooKeeperManager.setTablePayload(tableName, 0)){
+        if (zooKeeperManager.setTablePayload(tableName, 0)) {
             String regionName = zooKeeperManager.getRegionServer(tableName);
             regionsInfo.get(regionName).put(tableName, 0);
-            //TODO:实际操作sql语句
-            return ResType.TRUNCATE_SUCCESS;
-        }else{
+            // TODO: 实际操作sql语句
+            boolean success = ServerClient.executeCmd(sql); // 调用ServerClient的executeUpdate方法
+            if (success) {
+                return ResType.TRUNCATE_SUCCESS;
+            } else {
+                // 回滚操作
+                regionsInfo.get(regionName).put(tableName, regionsInfo.get(regionName).getOrDefault(tableName, 0) + 1); // 恢复原负载
+                zooKeeperManager.setTablePayload(tableName, regionsInfo.get(regionName).get(tableName)); // 恢复ZooKeeper中的负载
+                return ResType.TRUNCATE_FAILURE;
+            }
+        } else {
             return ResType.TRUNCATE_FAILURE;
         }
     }

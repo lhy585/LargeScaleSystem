@@ -288,4 +288,13 @@ public class ZooKeeperUtils implements Watcher{
 		}
 	}
 
+	public boolean nodeExists(String path) {
+		try {
+			Stat stat = zookeeper.exists(path, false);
+			return stat != null;
+		} catch (KeeperException | InterruptedException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
 }
