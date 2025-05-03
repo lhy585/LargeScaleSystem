@@ -8,6 +8,10 @@ import java.sql.Connection;
 import java.sql.Statement;
 import java.util.Objects;
 
+//TODO:只要public static ResType executeCmd(String ip, String cmd)
+// 现在这个函数写在ServerClient里面了，要剪切过来
+// 删除所有有关告知ZooKeeper表信息的函数
+// PS：请不要修改region manager类的任何地方
 //public class ServerMaster {
 //    /**
 //     * 从主服务器创建表的副本

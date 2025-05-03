@@ -424,6 +424,4 @@ public class Master {
             return false; // 发送失败，说明连接断了
         }
     }
-
-
 }

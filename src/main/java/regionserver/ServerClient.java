@@ -18,6 +18,9 @@ public class ServerClient {
      * @param sqlCmd 完整的CREATE TABLE SQL语句
      * @return 是否创建成功
      */
+    //TODO:region server不和ZooKeeper做过多通信，ZooKeeper监控节点在就行，数据库连接没挂就好了
+    // 其他的不管我那边操作了也测试通过了，增删改表region server都不管告知，这一部分有些删了就好
+    // 只要：①数据库级别连接ZooKeeper；②数据库数据正常
     public static boolean createTable(String tableName, String sqlCmd) {
         ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
 
@@ -101,10 +104,12 @@ public class ServerClient {
      * @param sqlCmd 查询SQL语句
      * @return 查询结果字符串
      */
+    //TODO:这是唯一一个client会问你的
+    // public static String selectTable(String ip, String sqlCmd){
     public static String selectTable(String sqlCmd){
         StringBuilder res = new StringBuilder();
         try {
-            ResultSet r =  RegionServer.statement.executeQuery(sqlCmd);
+            ResultSet r =  RegionServer.statement.executeQuery(sqlCmd);//TODO:要知道ip啊，不然不知道问哪个子数据库
             ResultSetMetaData rsmd = r.getMetaData();
             int columnCount = rsmd.getColumnCount();
             while(r.next()){
@@ -126,6 +131,10 @@ public class ServerClient {
      * @param cmd SQL命令
      * @return 是否执行成功
      */
+    //TODO:这是唯一一个master会问你的，有点混了，应该不是在ServerClient里面
+    // ip必须要有，拿着ip取正确的数据库线程，然后执行就行，返回一个ture/false,执行就好了
+    // 不用管具体什么操作，也不再组合什么语句了，直接返回执行结果，返回值为ResType，可能需要你判断一下操作符，就是第一个小字符串，也简单
+    // 想要public static ResType executeCmd(String ip, String cmd)
     public static boolean executeCmd(String cmd){
         try {
             if (cmd.trim().toLowerCase().startsWith("select")) {
