@@ -137,6 +137,7 @@ public class ZooKeeperUtils implements Watcher{
 	 * 创建节点
      */
 	public String createNode(String path,String data) throws Exception{
+		System.out.println("call ZooKeeperUtils.createNode");
 		return this.zookeeper.create(path, data.getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 	}
 
@@ -148,6 +149,7 @@ public class ZooKeeperUtils implements Watcher{
 	 * 获取路径下所有子节点
      */
 	public List<String> getChildren(String path) throws KeeperException, InterruptedException{
+		System.out.println("call ZooKeeperUtils.getchildren " + path);
 		List<String> children = zookeeper.getChildren(path, false);
 		return children;
 	}
@@ -160,6 +162,7 @@ public class ZooKeeperUtils implements Watcher{
 	 * 获取节点上面的数据
      */
 	public String getData(String path) throws KeeperException, InterruptedException{
+		System.out.println("call ZooKeeperUtils.getData " + path);
 		byte[] data = zookeeper.getData(path, false, null);
 		if (data == null) {
 			return "";
@@ -176,6 +179,7 @@ public class ZooKeeperUtils implements Watcher{
 	 * @throws InterruptedException
 	 */
 	public Stat setData(String path,String data) throws KeeperException, InterruptedException{
+		System.out.println("call ZooKeeperUtils.setData " + path);
 		Stat stat = zookeeper.setData(path, data.getBytes(), -1);
 		return stat;
 	}
@@ -230,6 +234,7 @@ public class ZooKeeperUtils implements Watcher{
 	 * @throws InterruptedException
 	 */
 	public void closeConnection() throws InterruptedException{
+		System.out.println("call close Connection");
 		if (zookeeper != null) {
 			zookeeper.close();
 		}
@@ -283,4 +288,13 @@ public class ZooKeeperUtils implements Watcher{
 		}
 	}
 
+	public boolean nodeExists(String path) {
+		try {
+			Stat stat = zookeeper.exists(path, false);
+			return stat != null;
+		} catch (KeeperException | InterruptedException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
 }

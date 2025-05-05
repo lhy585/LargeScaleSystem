@@ -83,4 +83,5 @@ public class Client {
             }
         }
     }
+    // create table t1(id int, name char(20))
 }

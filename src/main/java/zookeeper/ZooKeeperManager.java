@@ -227,4 +227,39 @@ public class ZooKeeperManager {
             return false;
         }
     }
+
+    public String getData(String serverPath) {
+        try {
+            return zooKeeperUtils.getData(serverPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public boolean nodeExists(String serverPath) {
+        try {
+            return zooKeeperUtils.nodeExists(serverPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public void setData(String serverPath, String newValue) {
+        try {
+            zooKeeperUtils.setData(serverPath, newValue);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public List<String> getChildren(String tablesPath) {
+        try {
+            return zooKeeperUtils.getChildren(tablesPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
 }

@@ -1,5 +1,8 @@
 package regionserver;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.sql.*;
 import java.util.*;
@@ -13,10 +16,9 @@ import javax.net.ServerSocketFactory;
 import java.io.IOException;
 import java.net.*;
 
-import zookeeper.ZooKeeperUtils;
-
-
-import org.apache.curator.framework.CuratorFramework;
+import org.apache.zookeeper.KeeperException;
+import zookeeper.TableInform;
+import zookeeper.ZooKeeperManager;
 
 class TableInfo {
     public String tableName;
@@ -41,13 +43,12 @@ class TableInfo {
     }
 }
 
-public class RegionServer {
+public class RegionServer implements Runnable {
     public static String ip;
     public static String port;
     public static String mysqlUser;
     public static String mysqlPwd;
 
-    //    public static CuratorFramework client = null;
     public static Connection connection = null;
     public static Statement statement = null;
 
@@ -55,7 +56,7 @@ public class RegionServer {
     public static ThreadPoolExecutor threadPoolExecutor = null;
 
     public static Boolean quitSignal = false;
-    public static ArrayList<TableInfo> tables;
+    public static List<TableInform> tables;
 
     public static String serverPath;
     public static String serverValue;
@@ -64,78 +65,176 @@ public class RegionServer {
         ip = getIPAddress();
         mysqlUser = "root";
         mysqlPwd = "040517cc";
-        port = "1001";
+        port = "5001";
         tables = new ArrayList<>();
     }
 
-    RegionServer() {
+    @Override
+    public void run() {
+        ZooKeeperManager zooKeeperManager = initRegionServer();
 
-    }
-    public static ZooKeeperUtils initRegionServer() {
-        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
-        System.out.println("init region server");
-        connection = JdbcUtils.getConnection("root", "040517cc");
-        try {
-            assert connection != null;
-            statement = connection.createStatement();
-        } catch (SQLException e) {
-            System.out.println(e);
+        // 主动连接 Master
+        try (Socket masterSocket = new Socket("127.0.0.1", Integer.parseInt(port)); // 连接 Master
+             BufferedReader in = new BufferedReader(new InputStreamReader(masterSocket.getInputStream()));
+             PrintWriter out = new PrintWriter(masterSocket.getOutputStream(), true)) {
+
+            System.out.println("[RegionServer] Connected to Master!");
+
+            // 发送注册消息
+            out.println("REGISTER_REGION_SERVER");
+            out.flush();
+
+            // 等待 Master 的响应
+            String response = in.readLine();
+            System.out.println("[RegionServer] Master response: " + response);
+
+            // 持续接收 Master 的指令
+            String command;
+            while ((command = in.readLine()) != null) {
+                System.out.println("[RegionServer] Received command: " + command);
+                // 处理 Master 的指令（如 CREATE_TABLE, INSERT_DATA 等）
+                if (command.equals("QUIT")) {
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("[RegionServer] Failed to connect to Master: " + e.getMessage());
         }
-        System.out.println("clear mysql data");
-        clearMysqlData();
-        System.out.println("create zookeeper node");
-        createZooKeeperNode(zooKeeperUtils);
-        System.out.println("create socket and thread pool");
-        createSocketAndThreadPool();
-        return zooKeeperUtils;
     }
+
+    public static ZooKeeperManager initRegionServer() {
+        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
+        System.out.println("Initializing RegionServer...");
+
+        // 动态选择可用端口
+        port = String.valueOf(getAvailableTcpPort());
+        System.out.println("Selected port: " + port);
+
+        // 确保每次初始化都创建新的连接和statement
+        try {
+            if (connection != null) {
+                connection.close();
+            }
+            connection = JdbcUtils.getConnection(mysqlUser, mysqlPwd);
+            if (connection != null) {
+                statement = connection.createStatement();
+            } else {
+                throw new SQLException("Failed to establish database connection.");
+            }
+        } catch (SQLException e) {
+            System.out.println("Failed to initialize database connection: " + e.getMessage());
+            e.printStackTrace();
+            // 根据需求决定是否抛出异常或继续
+        }
+
+        System.out.println("Clearing MySQL data...");
+        clearMysqlData();
+
+        System.out.println("Creating ZooKeeper node...");
+        createZooKeeperNode(zooKeeperManager);
+
+        System.out.println("Creating socket and thread pool...");
+        createSocketAndThreadPool();
+
+        return zooKeeperManager;
+    }
+
     public static void clearMysqlData() {
         if (connection != null && statement != null) {
             try {
                 // 删除已有数据库
-                String deleteDB = "drop database if exists lss";
+                String deleteDB = "DROP DATABASE IF EXISTS lss";
                 statement.execute(deleteDB);
                 // 重新创建数据库
-                String createDB = "create database if not exists lss";
+                String createDB = "CREATE DATABASE IF NOT EXISTS lss";
                 statement.execute(createDB);
 
                 // 使用新创建的数据库
-                String useDB = "use lss";
+                String useDB = "USE lss";
                 statement.execute(useDB);
-            } catch(Exception e) {
-                System.out.println(e);
+            } catch (Exception e) {
+                System.out.println("Error clearing MySQL data: " + e.getMessage());
+                e.printStackTrace();
             }
+        } else {
+            System.out.println("Connection or statement is not initialized. Cannot clear MySQL data.");
         }
     }
 
-    public static void createZooKeeperNode(ZooKeeperUtils zooKeeperUtils) {
+    public static void createZooKeeperNode(ZooKeeperManager zooKeeperManager) {
         try {
-            List<String> serverNodes = zooKeeperUtils.getChildren("/lss/region_servers");
+            System.out.println("Calling RegionServer.createZooKeeperNode");
 
-            int max = 0;
-            for (String node : serverNodes) {
-                int index = Integer.valueOf(node.substring(node.indexOf("_") + 1));
-                if (index > max) {
-                    max = index;
+            serverPath = "/lss/region_server/" + ip; // 修改路径以包含IP
+            serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + ",3306,0";
+
+            // 检查节点是否存在
+            if (zooKeeperManager.nodeExists(serverPath)) {
+                System.out.println("ZooKeeper node already exists at path: " + serverPath + ". Continuing to use it.");
+
+                // 获取现有节点的数据并更新tables列表
+                String existingValue = zooKeeperManager.getData(serverPath);
+                if (existingValue != null && !existingValue.isEmpty()) {
+                    // 解析现有节点数据并更新tables
+                    // 假设数据格式为 "ip,port,mysqlUser,mysqlPwd,port2master,port2regionserver"
+                    // 需要根据实际数据格式调整解析逻辑
+                    // 这里假设tables信息存储在其他路径，如 /lss/region_server/{ip}/table/
+                    updateTablesFromZooKeeper(zooKeeperManager, ip);
+                } else {
+                    System.out.println("Warning: Existing ZooKeeper node has no data.");
                 }
+            } else {
+                // 节点不存在，创建新节点
+                zooKeeperManager.addRegionServer(ip, port, tables, mysqlPwd, mysqlUser, "2182", "3306");
+                System.out.println("ZooKeeper node created successfully at path: " + serverPath);
             }
+        } catch (KeeperException.NodeExistsException e) {
+            System.out.println("ZooKeeper node already exists at path: " + serverPath + ". Continuing to use it.");
 
-            serverPath = "/lss/region_servers/server_" + (max + 1);
-            serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + "," + "3306" + ",0";
+            // 获取现有节点的数据并更新tables列表
+            try {
+                String existingValue = zooKeeperManager.getData(serverPath);
+                if (existingValue != null && !existingValue.isEmpty()) {
+                    // 解析现有节点数据并更新tables
+                    updateTablesFromZooKeeper(zooKeeperManager, ip);
+                } else {
+                    System.out.println("Warning: Existing ZooKeeper node has no data.");
+                }
+            } catch (Exception ex) {
+                System.out.println("Error retrieving data from existing ZooKeeper node: " + ex.getMessage());
+                ex.printStackTrace();
+            }
+        } catch (Exception e) {
+            System.out.println("Error creating ZooKeeper node: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
 
-            zooKeeperUtils.createNode(serverPath, serverValue);
+    /**
+     * 根据现有的ZooKeeper节点数据更新tables列表
+     * 需要根据实际的ZooKeeper数据结构进行调整
+     */
+    private static void updateTablesFromZooKeeper(ZooKeeperManager zooKeeperManager, String ip) throws Exception {
+        // 假设tables存储在 /lss/region_server/{ip}/table/{tableName}/
+        String tablesPath = "/lss/region_server/" + ip + "/table";
+        List<String> tableNames = zooKeeperManager.getChildren(tablesPath);
 
-        } catch(Exception e) {
-            System.out.println(e);
+        for (String tableName : tableNames) {
+            // 这里可以根据需要进一步解析每个表的信息
+            // 例如，读取 /lss/region_server/{ip}/table/{tableName}/payload 获取表的详细信息
+            tables.add(new TableInform(tableName, 3));
+            System.out.println("Added table from ZooKeeper: " + tableName);
         }
     }
 
     public static void createSocketAndThreadPool(){
-        ServerSocketFactory serverSocketFactory  = ServerSocketFactory.getDefault();
         try {
+            ServerSocketFactory serverSocketFactory  = ServerSocketFactory.getDefault();
             serverSocket = serverSocketFactory.createServerSocket(Integer.valueOf(port));
+            System.out.println("Server socket created on port: " + port);
         } catch (IOException e) {
-            System.out.println(e);
+            System.out.println("Error creating server socket: " + e.getMessage());
+            e.printStackTrace();
         }
 
         threadPoolExecutor = new ThreadPoolExecutor(60,
@@ -157,7 +256,7 @@ public class RegionServer {
             String hostname = addr.getHostName();
             System.out.println("Local host name: "+hostname);
         } catch(UnknownHostException e) {
-            System.out.println(e);
+            System.out.println("Error getting IP address: " + e.getMessage());
         }
         return res;
     }
@@ -172,38 +271,5 @@ public class RegionServer {
             }
         }
         return 0;
-    }
-
-    public static void main( String[] args ) throws InterruptedException {
-        ZooKeeperUtils zooKeeperUtils = initRegionServer();
-
-        threadPoolExecutor.submit(new Runnable() {
-            @Override
-            public void run() {
-                Scanner sc = new Scanner(System.in);
-                while(true){
-                    String cmd = sc.nextLine();
-                    if ( !cmd.equals("quit") ) {
-                        System.out.println(cmd);
-                    } else {
-                        quitSignal = true;
-                        break;
-                    }
-                }
-                sc.close();
-            }
-        });
-        while(true) {
-            try {
-                Socket socket = serverSocket.accept();
-                threadPoolExecutor.submit(new ServerThread(socket, statement, tables));
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            if (quitSignal){
-                break;
-            }
-        }
-        zooKeeperUtils.closeConnection();
     }
 }

@@ -33,12 +33,12 @@ public class SelectInfo {
     }
 
     public String Serialize(){
-      String ret = "";
-      if(this.isValid){
-          ret += "true " + ip + " " + sql;
-      }else{
-          ret += "false";
-      }
-      return ret;
+        String ret = "";
+        if(this.isValid){
+            ret += "true " + ip + " " + sql;
+        }else{
+            ret += "false";
+        }
+        return ret;
     }
 }

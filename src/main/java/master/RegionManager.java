@@ -516,9 +516,7 @@ public class RegionManager{
                     String delRegion = zooKeeperManager.getRegionServer(tableName);
                     Integer load = regionsInfo.get(delRegion).get(tableName);
                     regionsInfo.get(delRegion).remove(tableName);
-                    zooKeeperManager.deleteTable(tableName);
                     regionsInfo.get(regionName).put(tableName, load);
-                    zooKeeperManager.addTable(regionName, new TableInform(tableName, load));
                     //TODO:迁移表
                 }
             }
