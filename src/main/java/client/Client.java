@@ -1,5 +1,7 @@
 package client;
 
+import com.mysql.cj.jdbc.SuspendableXAConnection;
+
 import java.io.*;
 import java.net.Socket;
 import java.util.HashMap;
@@ -73,8 +75,24 @@ public class Client {
                         System.out.println("Message sent to server: " + sql);
 
                         // 接收服务器的响应
-                        String response = in.readLine();
-                        System.out.println("Response from server: " + response);
+                        String response=in.readLine();
+                        if(response.equals("YES")){
+                            String response1 = in.readLine();
+//                        System.out.println("Response from server: " + response);
+                            String response2=in.readLine();
+                            Socket socket1=new Socket(response1,1001);
+                            PrintWriter out1 = new PrintWriter(socket1.getOutputStream(), true);
+                            BufferedReader in1 = new BufferedReader(new InputStreamReader(socket1.getInputStream()));
+                            // 发送消息到服务器
+                            out1.println(response2);
+                            System.out.println("Message sent to server: " + sql);
+                            String response3= in1.readLine();
+                            System.out.println("get response"+response3);
+                        }
+                        else{
+                            String response1=in.readLine();
+                            System.out.println(response1);
+                        }
                     }
                 }
             } catch (IOException e) {
