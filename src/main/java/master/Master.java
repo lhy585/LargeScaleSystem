@@ -1,16 +1,19 @@
 package master;
 
-import socket.SqlSocket;
+import regionserver.RegionServer;
 import socket.ParsedSqlResult;
+import socket.SqlSocket;
 import socket.SqlType;
+import zookeeper.ZooKeeperManager;
 
-import java.io.*;
-import java.net.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-
-import regionserver.*;
-import zookeeper.ZooKeeperManager;
 
 public class Master {
     //Master主程序：打开服务器，监听客户端并分配线程连接
@@ -21,7 +24,7 @@ public class Master {
         // 启动两个监听线程
         ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
         new ClientListenerThread(5000).start(); // 监听Client
-        new RegionServerListenerThread(5001, zooKeeperManager).start(); // 监听RegionServer
+        //new RegionServerListenerThread(5001, zooKeeperManager).start(); // 监听RegionServer
     }
 
     // 线程1：监听Clients连接
@@ -129,21 +132,15 @@ public class Master {
                 String sql;
                 while (isSocketAlive(socket)) {
                     while ((sql = input.readLine()) == null) ; //持续接受并读取客户端输入
-                    if(sql.equals("REGISTER"))continue;
                     sqlSocket.parseSql(sql);//处理字符串
                     ParsedSqlResult parsedSqlResult = sqlSocket.getParsedSqlResult();
                     if (parsedSqlResult == null || parsedSqlResult.getType() == SqlType.UNKNOWN) {
-                        System.out.println("null or unknown");
+                        System.out.println("NULL or UNKNOWN operator");
                         continue;
                     }
 
                     List<String> tableNames = parsedSqlResult.getTableNames();
                     SqlType type = parsedSqlResult.getType();
-
-                    for (String tableName : tableNames) {
-                        String region = RegionManager.zooKeeperManager.getRegionServer(tableName);
-                        System.out.println("Table: " + tableName + " is in Region: " + region + ".");
-                    }
 
                     Map<String, ResType> res;
                     switch (type) {

@@ -56,16 +56,14 @@ public class SqlSocket {
      */
     public void parseSql(String sql) {
         try {
-            if (sql.contains("REGISTER"))return;
             System.out.println("Request is: \" " + sql + " \"");
             Statement statement = CCJSqlParserUtil.parse(sql);
             SqlType type;
             TablesNamesFinder tablesNamesFinder = new TablesNamesFinder();
             List<String> tableNames;
 
-            if (statement instanceof Select) {
+            if (statement instanceof Select select) {
                 type = SqlType.SELECT;
-                Select select = (Select) statement;
                 PlainSelect plainSelect = (PlainSelect) select.getSelectBody();
 
                 output.println("✅ 发送的是 SELECT 语句");
@@ -78,27 +76,24 @@ public class SqlSocket {
                 if (plainSelect.getWhere() != null) {
                     output.println("📌 查询条件：" + plainSelect.getWhere());
                 }
-            } else if (statement instanceof Insert) {
+            } else if (statement instanceof Insert insert) {
                 type = SqlType.INSERT;
-                Insert insert = (Insert) statement;
 
                 output.println("✅ 发送的是 INSERT 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
                 output.println("📌 插入表名：" + tableNames);
                 output.println("📌 字段列表：" + insert.getColumns());
                 output.println("📌 插入值：" + insert.getItemsList());
-            } else if (statement instanceof CreateTable) {
+            } else if (statement instanceof CreateTable create) {
                 type = SqlType.CREATE;
-                CreateTable create = (CreateTable) statement;
 
                 output.println("✅ 发送的是 CREATE TABLE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
                 output.println("📌 表名：" + tableNames);
                 output.println("📌 字段定义：");
                 create.getColumnDefinitions().forEach(col -> output.println("  - " + col));
-            } else if (statement instanceof Delete) {
+            } else if (statement instanceof Delete delete) {
                 type = SqlType.DELETE;
-                Delete delete = (Delete) statement;
 
                 output.println("✅ 发送的是 DELETE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
@@ -106,9 +101,8 @@ public class SqlSocket {
                 if (delete.getWhere() != null) {
                     output.println("📌 删除条件：" + delete.getWhere());
                 }
-            } else if (statement instanceof Update) {
+            } else if (statement instanceof Update update) {
                 type = SqlType.UPDATE;
-                Update update = (Update) statement;
 
                 output.println("✅ 发送的是 UPDATE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
@@ -120,9 +114,8 @@ public class SqlSocket {
                 if (update.getWhere() != null) {
                     output.println("📌 更新条件：" + update.getWhere());
                 }
-            } else if (statement instanceof Alter) {
+            } else if (statement instanceof Alter alter) {
                 type = SqlType.ALTER;
-                Alter alter = (Alter) statement;
 
                 output.println("✅ 发送的是 ALTER 语句");
                 String tableName = alter.getTable().getName();
@@ -130,16 +123,14 @@ public class SqlSocket {
                 output.println("📌 修改的表名：" + tableNames);
                 output.println("📌 修改操作列表：");
                 alter.getAlterExpressions().forEach(expr -> output.println("  - " + expr));
-            } else if (statement instanceof Truncate) {
+            } else if (statement instanceof Truncate truncate) {
                 type = SqlType.TRUNCATE;
-                Truncate truncate = (Truncate) statement;
 
                 output.println("✅ 发送的是 TRUNCATE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
                 output.println("📌 清空的表名：" + tableNames);
-            }else if (statement instanceof Drop) {
+            }else if (statement instanceof Drop drop) {
                 type = SqlType.DROP;
-                Drop drop = (Drop) statement;
 
                 output.println("✅ 发送的是 DROP 语句");
                 output.println("📌 删除类型：" + drop.getType());

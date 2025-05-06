@@ -6,12 +6,12 @@
  */
 package master;
 
-import java.util.*;
-import java.util.stream.Collectors;
-
 import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
 import zookeeper.ZooKeeperUtils;
+
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class RegionManager{
     public static ZooKeeperManager zooKeeperManager;
@@ -123,26 +123,32 @@ public class RegionManager{
             List<ResType> checkList = findTableMasterAndSlave(masterTableName);
             if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS
                 && checkList.get(1) == ResType.FIND_SUCCESS){//母本丢失
-                addSameTable(masterTableName, slaveTableName);
-                toBeCopiedTable.remove(tableName);
+                if(addSameTable(masterTableName, slaveTableName)) {
+                    toBeCopiedTable.remove(tableName);
+                }
             }else if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){//副本丢失
-                addSameTable(slaveTableName, masterTableName);
-                toBeCopiedTable.remove(tableName);
+                if(addSameTable(slaveTableName, masterTableName)) {
+                    toBeCopiedTable.remove(tableName);
+                }
             }
         }
     }
 
-    private static void addSameTable(String addTableName, String templateTableName){
+    private static boolean addSameTable(String addTableName, String templateTableName){
         //从被拷贝处取信息
         String templateRegionName = zooKeeperManager.getRegionServer(templateTableName);
         Integer load = regionsInfo.get(templateRegionName).get(templateTableName);
         //新建
         String addRegionName = getLeastRegionName(templateTableName);
+        if(addRegionName == null){
+            return false;
+        }
         regionsInfo.get(addRegionName).put(addTableName, load);
         //通知ZooKeeper
         zooKeeperManager.addTable(addRegionName, new TableInform(addTableName,load));
         sortAndUpdate();
         //TODO:从slaveRegionName复制表到regionName
+        return true;
     }
 
     //region servers均衡策略
@@ -447,21 +453,19 @@ public class RegionManager{
                     && checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){
                 return false;//不可能成功,因为缺表
             }else if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){//母本丢失
-                //从副本处取信息
-                String slaveRegionName = zooKeeperManager.getRegionServer(slaveTableName);
-                Integer load = regionsInfo.get(slaveRegionName).get(slaveTableName);
-                //新建母本
-                String regionName = getLeastRegionName(slaveTableName);
-                regionsInfo.get(regionName).put(tableName, load);
-                //TODO:从slaveRegionName复制表到regionName
+                boolean flag = addSameTable(tableName, slaveTableName);
+                if(!flag && !toBeCopiedTable.contains(tableName)) {
+                    toBeCopiedTable.add(tableName);
+                }else if(flag) {
+                    toBeCopiedTable.remove(tableName);
+                }
             }else if(checkList.get(1) == ResType.FIND_TABLE_NO_EXISTS){//副本丢失
-                //从母本处取信息
-                String regionName = zooKeeperManager.getRegionServer(tableName);
-                Integer load = regionsInfo.get(regionName).get(tableName);
-                //新建副本
-                String slaveRegionName = getLeastRegionName(tableName);
-                regionsInfo.get(slaveRegionName).put(slaveTableName, load);
-                //TODO:从regionName复制表到slaveRegionName
+                boolean flag = addSameTable(slaveTableName, tableName);
+                if(!flag && !toBeCopiedTable.contains(slaveTableName)) {
+                    toBeCopiedTable.add(slaveTableName);
+                }else if(flag) {
+                    toBeCopiedTable.remove(slaveTableName);
+                }
             }
         }
         sortAndUpdate();
