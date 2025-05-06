@@ -1,6 +1,7 @@
 package client;
 
 import com.mysql.cj.jdbc.SuspendableXAConnection;
+import master.SelectInfo;
 
 import java.io.*;
 import java.net.Socket;
@@ -40,29 +41,48 @@ public class Client {
                         System.out.print("    -> ");
                     }
                     String sql = sqlBuilder.toString().trim();
-                    System.out.println("sql: " + sql);
+                    System.out.println("debug sql: " + sql);
                     if(sql.substring(0,sql.indexOf(' ')).equals("select")&&!sql.contains("join")){
                         String table_name=sql.substring(sql.indexOf("from"));
                         table_name=table_name.substring(table_name.indexOf(' ')+1,table_name.indexOf(';'));
-                        System.out.println("table_name: "+table_name);
+                        System.out.println("debug table_name: "+table_name);
                         if(map.containsKey(table_name)){
                             //缓存中找到table_name
-                            System.out.println(111);
+                            System.out.println("debug"+ 111);
                             //TODO: 与regionserver通信
+                            Socket socket1 = new Socket(map.get(table_name),1001);
+                            PrintWriter out1 = new PrintWriter(socket1.getOutputStream(), true);
+                            BufferedReader in1 = new BufferedReader(new InputStreamReader(socket1.getInputStream()));
+                            out1.println(sql);
+                            System.out.println("debug Message sent to server: " + sql);
+                            String response3= in1.readLine();
+                            System.out.println("debug get response"+response3);
                         }
                         else{
-                            //缓存中未找到table_name
+                            //TODO: 与regionserver通信
                             Socket socket = new Socket(ip, port);
                             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
                             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
                             // 发送消息到服务器
                             out.println(sql);
-                            System.out.println("Message sent to server: " + sql);
+                            System.out.println("debug Message sent to server: " + sql);
+
                             // 接收服务器的响应
-                            String ip = in.readLine();
-                            String sql_response = in.readLine();
-                            map.put(table_name,ip);
-                            //TODO: 与regionserver通信
+                            String response=in.readLine();
+                            SelectInfo info = new SelectInfo(response);
+                            if(info.getIsValid()){
+                                Socket socket1 = new Socket(info.getIp(),1001);
+                                PrintWriter out1 = new PrintWriter(socket1.getOutputStream(), true);
+                                BufferedReader in1 = new BufferedReader(new InputStreamReader(socket1.getInputStream()));
+                                out1.println(info.getSql());
+                                System.out.println("debug Message sent to server: " + sql);
+                                String response3= in1.readLine();
+                                System.out.println("debug get response"+response3);
+                            }
+                            else{
+                                System.out.println("some table name is not valid");
+                            }
                         }
                     }
                     else{
@@ -72,27 +92,40 @@ public class Client {
 
                         // 发送消息到服务器
                         out.println(sql);
-                        System.out.println("Message sent to server: " + sql);
+                        System.out.println("debug Message sent to server: " + sql);
 
                         // 接收服务器的响应
                         String response=in.readLine();
-                        if(response.equals("YES")){
-                            String response1 = in.readLine();
-//                        System.out.println("Response from server: " + response);
-                            String response2=in.readLine();
-                            Socket socket1=new Socket(response1,1001);
+                        SelectInfo info = new SelectInfo(response);
+                        if(info.getIsValid()){
+                            Socket socket1 = new Socket(info.getIp(),1001);
                             PrintWriter out1 = new PrintWriter(socket1.getOutputStream(), true);
                             BufferedReader in1 = new BufferedReader(new InputStreamReader(socket1.getInputStream()));
-                            // 发送消息到服务器
-                            out1.println(response2);
-                            System.out.println("Message sent to server: " + sql);
+                            out1.println(info.getSql());
+                            System.out.println("debug Message sent to server: " + sql);
                             String response3= in1.readLine();
-                            System.out.println("get response"+response3);
+                            System.out.println("debug get response"+response3);
                         }
                         else{
-                            String response1=in.readLine();
-                            System.out.println(response1);
+                            System.out.println("some table name is not valid");
                         }
+//                        if(response.equals("YES")){
+//                            String response1 = in.readLine();
+////                        System.out.println("Response from server: " + response);
+//                            String response2=in.readLine();
+//                            Socket socket1=new Socket(response1,1001);
+//                            PrintWriter out1 = new PrintWriter(socket1.getOutputStream(), true);
+//                            BufferedReader in1 = new BufferedReader(new InputStreamReader(socket1.getInputStream()));
+//                            // 发送消息到服务器
+//                            out1.println(response2);
+//                            System.out.println("Message sent to server: " + sql);
+//                            String response3= in1.readLine();
+//                            System.out.println("get response"+response3);
+//                        }
+//                        else{
+//                            String response1=in.readLine();
+//                            System.out.println(response1);
+//                        }
                     }
                 }
             } catch (IOException e) {

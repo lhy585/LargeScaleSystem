@@ -1,8 +1,9 @@
 package master;
 
+import lombok.Getter;
+
 import java.util.List;
 import java.util.Objects;
-
 public class SelectInfo {
     boolean isValid = false;
     String ip = null;
@@ -20,7 +21,7 @@ public class SelectInfo {
         this.isValid = isValid;
     }
 
-    //TODO:client调用这个构造函数，然后判断isValid、取信息等等
+    //client调用这个构造函数，然后判断isValid、取信息等等
     public SelectInfo(String str) {
         String[] tokens = str.split(" ",3);
         if(Objects.equals(tokens[0], "true")){
@@ -40,5 +41,17 @@ public class SelectInfo {
             ret += "false";
         }
         return ret;
+    }
+
+    public String getIp() {
+        return ip;
+    }
+
+    public boolean getIsValid() {
+        return isValid;
+    }
+
+    public String getSql() {
+        return sql;
     }
 }
