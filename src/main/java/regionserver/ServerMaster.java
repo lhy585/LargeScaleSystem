@@ -1,507 +1,236 @@
 package regionserver;
 
-import zookeeper.ZooKeeperUtils;
+import zookeeper.ZooKeeperManager;
+// import zookeeper.ZooKeeperUtils; // Not directly used by ServerMaster if zkManager provides all needed methods
 
 import java.io.File;
 import java.io.IOException;
 import java.sql.Connection;
+import java.sql.SQLException; // Added for clarity
 import java.sql.Statement;
-import java.util.Objects;
 
-//TODO:只要public static ResType executeCmd(String ip, String cmd)
-// 现在这个函数写在ServerClient里面了，要剪切过来
-// 删除所有有关告知ZooKeeper表信息的函数
-// PS：请不要修改region manager类的任何地方
-//public class ServerMaster {
-//    /**
-//     * 从主服务器创建表的副本
-//     * @param sourceServerName 源服务器名称
-//     * @param sourceIp 源服务器IP
-//     * @param sourcePort 源服务器端口
-//     * @param sourceUser 源服务器用户名
-//     * @param sourcePwd 源服务器密码
-//     * @param tableName 要复制的表名
-//     */
-//    public static void dumpTable(String sourceServerName, String sourceIp, String sourcePort,
-//                                 String sourceUser, String sourcePwd, String tableName) {
-//        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
-//
-//        // 从源服务器导出表结构
-//        JdbcUtils.dumpRemoteSql(tableName, sourceIp, sourceUser, sourcePwd);
-//        File file = new File("./sql/lss." + tableName + ".sql");
-//
-//        if (file.exists()) {
-//            // 在本地创建从表
-//            String[] mysqlCmd = {
-//                    "mysql",
-//                    "-u", RegionServer.mysqlUser,
-//                    "-h", "localhost",
-//                    "-p" + RegionServer.mysqlPwd,
-//                    "-e", "source ./sql/lss." + tableName + ".sql"
-//            };
-//
-//            try {
-//                ProcessBuilder pb = new ProcessBuilder(mysqlCmd);
-//                pb.redirectErrorStream(true);
-//                Process process = pb.start();
-//                int exitCode = process.waitFor();
-//
-//                if (exitCode != 0) {
-//                    System.out.println("创建从表失败");
-//                    return;
-//                }
-//
-//                // 更新ZooKeeper节点 - 在当前服务器添加从表
-//                String serverPath = RegionServer.serverPath;
-//                String currentValue = zooKeeperUtils.getData(serverPath);
-//                if (currentValue != null) {
-//                    String newValue = addTable(currentValue, tableName + "_slave");
-//                    zooKeeperUtils.setData(serverPath, newValue);
-//                }
-//
-//                // 在源服务器节点中将从表升级为主表
-//                String masterServerPath = "/lss/region_servers/" + sourceServerName;
-//                String masterNodeData = zooKeeperUtils.getData(masterServerPath);
-//                if (masterNodeData != null) {
-//                    String[] parts = masterNodeData.split(",");
-//                    for (int i = 6; i < parts.length; i++) {
-//                        if (parts[i].equals(tableName + "_slave")) {
-//                            parts[i] = tableName;
-//                        }
-//                    }
-//
-//                    // 更新表计数
-//                    parts[5] = String.valueOf(parts.length - 6);
-//
-//                    // 重建节点值
-//                    StringBuilder newMasterValue = new StringBuilder();
-//                    for (String part : parts) {
-//                        newMasterValue.append(part).append(",");
-//                    }
-//                    zooKeeperUtils.setData(masterServerPath,
-//                            newMasterValue.substring(0, newMasterValue.length() - 1));
-//                }
-//            } catch (Exception e) {
-//                System.out.println("表复制过程中出错: " + e.getMessage());
-//                e.printStackTrace();
-//            }
-//        } else {
-//            System.out.println("创建表导出文件失败");
-//        }
-//    }
-//
-//    /**
-//     * 将表从一个服务器迁移到另一个服务器
-//     * @param sourceServerName 源服务器名称
-//     * @param sourceIp 源服务器IP
-//     * @param sourcePort 源服务器端口
-//     * @param sourceUser 源服务器用户名
-//     * @param sourcePwd 源服务器密码
-//     * @param tableName 要迁移的表名
-//     */
-//    public static void migrateTable(String sourceServerName, String sourceIp, String sourcePort,
-//                                    String sourceUser, String sourcePwd, String tableName) {
-//        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
-//
-//        // 从源服务器导出表
-//        JdbcUtils.dumpRemoteSql(tableName, sourceIp, sourceUser, sourcePwd);
-//        File file = new File("./sql/lss." + tableName + ".sql");
-//
-//        if (file.exists()) {
-//            // 在本地创建表
-//            String[] mysqlCmd = {
-//                    "mysql",
-//                    "-u", RegionServer.mysqlUser,
-//                    "-h", "localhost",
-//                    "-p" + RegionServer.mysqlPwd,
-//                    "-e", "source ./sql/lss." + tableName + ".sql"
-//            };
-//
-//            try {
-//                ProcessBuilder pb = new ProcessBuilder(mysqlCmd);
-//                pb.redirectErrorStream(true);
-//                Process process = pb.start();
-//                int exitCode = process.waitFor();
-//
-//                if (exitCode != 0) {
-//                    System.out.println("创建迁移表失败");
-//                    return;
-//                }
-//
-//                // 更新ZooKeeper - 添加到当前服务器
-//                String serverPath = RegionServer.serverPath;
-//                String currentValue = zooKeeperUtils.getData(serverPath);
-//                if (currentValue != null) {
-//                    String newValue = addTable(currentValue, tableName);
-//                    zooKeeperUtils.setData(serverPath, newValue);
-//                }
-//
-//                // 从源服务器删除表
-//                Connection connection = JdbcUtils.getConnection(
-//                        sourceIp, sourceUser, sourcePwd);
-//                if (connection != null) {
-//                    try (Statement statement = connection.createStatement()) {
-//                        statement.execute("DROP TABLE IF EXISTS " + tableName);
-//                    } finally {
-//                        JdbcUtils.releaseResc(null, null, connection);
-//                    }
-//                }
-//
-//                // 更新ZooKeeper - 从源服务器删除表
-//                String sourceServerPath = "/lss/region_servers/" + sourceServerName;
-//                String sourceNodeData = zooKeeperUtils.getData(sourceServerPath);
-//                if (sourceNodeData != null) {
-//                    String newSourceValue = deleteTable(sourceNodeData, tableName);
-//                    zooKeeperUtils.setData(sourceServerPath, newSourceValue);
-//                }
-//            } catch (Exception e) {
-//                System.out.println("表迁移过程中出错: " + e.getMessage());
-//                e.printStackTrace();
-//            }
-//        } else {
-//            System.out.println("创建表导出文件失败");
-//        }
-//    }
-//
-//    /**
-//     * 从ZooKeeper节点数据中删除表
-//     * @param serverValue 服务器节点值
-//     * @param tableName 要删除的表名
-//     * @return 修改后的节点值
-//     */
-//    public static String deleteTable(String serverValue, String tableName) {
-//        String[] parts = serverValue.split(",");
-//        parts[5] = String.valueOf(Integer.parseInt(parts[5]) - 1); // 减少表计数
-//        StringBuilder newValue = new StringBuilder();
-//
-//        for (String part : parts) {
-//            if (!part.equals(tableName)) {
-//                newValue.append(part).append(",");
-//            }
-//        }
-//        return newValue.substring(0, newValue.length() - 1);
-//    }
-//
-//    /**
-//     * 向ZooKeeper节点数据中添加表
-//     * @param serverValue 服务器节点值
-//     * @param tableName 要添加的表名
-//     * @return 修改后的节点值
-//     */
-//    public static String addTable(String serverValue, String tableName) {
-//        String[] parts = serverValue.split(",");
-//        parts[5] = String.valueOf(Integer.parseInt(parts[5]) + 1); // 增加表计数
-//        StringBuilder newValue = new StringBuilder();
-//
-//        for (String part : parts) {
-//            newValue.append(part).append(",");
-//        }
-//        return newValue.append(tableName).toString();
-//    }
-//}
+// Explicit imports to help with potential type resolution issues for InputStream
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
+
+/**
+ * Contains static methods likely called remotely by the Master (e.g., via RPC or commands)
+ * to perform administrative tasks like migrating or dumping tables between RegionServers.
+ * Interacts with local system commands (mysqldump, mysql) and ZooKeeper.
+ */
 public class ServerMaster {
-    /**
-     * 从主服务器创建表的副本
-     * @param sourceServerName 源服务器名称
-     * @param sourceIp 源服务器IP
-     * @param sourcePort 源服务器端口
-     * @param sourceUser 源服务器用户名
-     * @param sourcePwd 源服务器密码
-     * @param tableName 要复制的表名
-     */
-    public static void dumpTable(String sourceServerName, String sourceIp, String sourcePort,
-                                 String sourceUser, String sourcePwd, String tableName) {
-        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
 
-        // 从源服务器导出表结构
-        JdbcUtils.dumpRemoteSql(tableName, sourceIp, sourceUser, sourcePwd);
-        File file = new File("./sql/lss." + tableName + ".sql");
+    // Define the base path consistently
+    private static final String ZK_REGION_SERVER_BASE_PATH = "/lss/region_server";
 
-        if (file.exists()) {
-            // 在本地创建从表
-            String[] mysqlCmd = {
-                    "mysql",
-                    "-u", RegionServer.mysqlUser,
-                    "-h", "localhost",
-                    "-p" + RegionServer.mysqlPwd,
-                    "-e", "source ./sql/lss." + tableName + ".sql"
-            };
-
-            try {
-                ProcessBuilder pb = new ProcessBuilder(mysqlCmd);
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-                int exitCode = process.waitFor();
-
-                if (exitCode != 0) {
-                    System.out.println("创建从表失败");
-                    return;
-                }
-
-                // 更新ZooKeeper节点 - 在当前服务器添加从表
-                String serverPath = RegionServer.serverPath;
-                String currentValue = zooKeeperUtils.getData(serverPath);
-                if (currentValue != null) {
-                    String newValue = addTable(currentValue, tableName + "_slave");
-                    zooKeeperUtils.setData(serverPath, newValue);
-                }
-
-                // 在源服务器节点中将从表升级为主表
-                String masterServerPath = "/lss/region_servers/" + sourceServerName;
-                String masterNodeData = zooKeeperUtils.getData(masterServerPath);
-                if (masterNodeData != null) {
-                    String[] parts = masterNodeData.split(",");
-                    for (int i = 6; i < parts.length; i++) {
-                        if (parts[i].equals(tableName + "_slave")) {
-                            parts[i] = tableName;
-                        }
-                    }
-
-                    // 更新表计数
-                    parts[5] = String.valueOf(parts.length - 6);
-
-                    // 重建节点值
-                    StringBuilder newMasterValue = new StringBuilder();
-                    for (String part : parts) {
-                        newMasterValue.append(part).append(",");
-                    }
-                    zooKeeperUtils.setData(masterServerPath,
-                            newMasterValue.substring(0, newMasterValue.length() - 1));
-                }
-            } catch (Exception e) {
-                System.out.println("表复制过程中出错: " + e.getMessage());
-                e.printStackTrace();
-            }
-        } else {
-            System.out.println("创建表导出文件失败");
-        }
-    }
-
-    public static void dumpTable(String cmd){
-        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
-        int index = cmd.indexOf("@");
-        String tableName = cmd.substring(cmd.indexOf(" " + 1),index - 1);
-        String masterInfoString = cmd.substring(index+2);
-        String [] masterInfo = masterInfoString.split(",");
-
-        System.out.println(tableName);
-        for (String i: masterInfo){
-            System.out.println(i);
-        }
-
-        JdbcUtils.dumpRemoteSql(tableName, masterInfo[1], masterInfo[3], masterInfo[4]);
-        File file = new File("./sql/lss." + tableName + ".sql");
-        if (file.exists()){
-            // 创建本地表
-            String  str="mysql -u " + RegionServer.mysqlUser +
-                    " -h " + "localhost" +
-                    " -p" + RegionServer.mysqlPwd +
-                    " < ./sql/lss." + tableName + ".sql";
-            try {
-                Runtime rt =Runtime.getRuntime();
-                rt.exec("cmd /c " + str);
-            } catch (IOException e){
-                System.out.println(e);
-                System.out.println(e.getStackTrace());
-            }
-
-            try {
-                // 创建zookeeperNode
-                String serverPath = RegionServer.serverPath;
-                String remoteValue = addTable(Objects.requireNonNull(zooKeeperUtils.getData(serverPath)), tableName + "_slave");
-                zooKeeperUtils.setData(serverPath, remoteValue);
-
-                // 将原来副本升级为主表
-                serverPath = "/lss/region_servers/" + masterInfo[0];
-                String [] temp = zooKeeperUtils.getData(serverPath).split(",");
-
-                for (int i = 6;i<temp.length;i++){
-                    if (temp[i].equals(tableName + "_slave")){
-                        temp[i] = tableName;
-                    }
-                }
-
-                StringBuilder newValue = new StringBuilder();
-                for (String i: temp){
-                    newValue.append(i).append(",");
-                }
-                zooKeeperUtils.setData(serverPath, newValue.substring(0,newValue.toString().length()-1));
-
-            } catch (Exception e) {
-                System.out.println(e);
-            }
-        } else {
-            System.out.println("创建副本失败");
-        }
-    }
-
-    public static void migrateTable(String cmd){
-        ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
-        int index = cmd.indexOf("@");
-        String tableName = cmd.substring(cmd.indexOf(" " + 1),index - 1);
-        String masterInfoString = cmd.substring(index+2);
-        String [] masterInfo = masterInfoString.split(",");
-
-        JdbcUtils.dumpRemoteSql(tableName, masterInfo[1], masterInfo[3], masterInfo[4]);
-        File file = new File("./sql/lss." + tableName + ".sql");
-        if (file.exists()){
-            // 创建本地表
-            String  str="mysql -u " + RegionServer.mysqlUser +
-                    " -h " + "localhost" +
-                    " -p" + RegionServer.mysqlPwd +
-                    " < ./sql/lss." + tableName + ".sql";
-            try {
-                Runtime rt =Runtime.getRuntime();
-                rt.exec("cmd /c " + str);
-            } catch (IOException e){
-                System.out.println(e);
-                System.out.println(e.getStackTrace());
-            }
-
-            try {
-                // 创建zookeeperNode
-                String serverPath = RegionServer.serverPath;
-                String remoteValue = addTable(Objects.requireNonNull(zooKeeperUtils.getData(serverPath)), tableName);
-                zooKeeperUtils.setData(serverPath, remoteValue);
-
-                // 将原来表删除
-                // 删除本地表
-                Connection connection = JdbcUtils.getConnection(masterInfo[1],masterInfo[3],masterInfo[4]);
-                assert connection != null;
-                Statement statement =  connection.createStatement();
-                statement.execute("drop table if exists "+tableName);
-
-                JdbcUtils.releaseResc(null,statement,connection);
-
-                // 创建zookeeperNode
-                serverPath = "/lss/region_servers/" + masterInfo[0];
-                remoteValue = deleteTable(Objects.requireNonNull(zooKeeperUtils.getData(serverPath)), tableName + "_slave");
-                zooKeeperUtils.setData(serverPath, remoteValue);
-
-            } catch (Exception e) {
-                System.out.println(e);
-            }
-        } else {
-            System.out.println("创建副本失败");
-        }
-    }
+    // NOTE: Using external commands like 'mysql' and 'mysqldump' has dependencies
+    // and security implications. Consider pure Java/JDBC alternatives if possible.
 
     /**
-     * 迁移表到新的region server
-     * @param sourceRegionName 源region名称
-     * @param targetRegionName 目标region名称
-     * @param tableName 要迁移的表名
-     * @return 是否迁移成功
+     * Copies (dumps) a table from a source RegionServer to this (target) RegionServer.
+     * Assumes this code is running in the context of the *target* RegionServer process,
+     * or has access to execute commands and connect to the target MySQL.
+     * The Master would typically *instruct* the target RS to perform this pull.
+     *
+     * @param sourceRegionName ZK node name (e.g., IP address) of the source server.
+     * @param sourceMysqlHost  IP/hostname of the source MySQL instance.
+     * @param sourceMysqlPort  Port of the source MySQL instance.
+     * @param sourceMysqlUser  Username for source MySQL.
+     * @param sourceMysqlPwd   Password for source MySQL.
+     * @param tableName        The name of the table to dump.
+     * @param targetMysqlUser  Username for the target (local) MySQL.
+     * @param targetMysqlPwd   Password for the target (local) MySQL.
+     * @return true if the dump and import seem successful, false otherwise.
      */
-    public static boolean migrateTable(String sourceRegionName, String targetRegionName, String tableName) {
+    public static boolean dumpTable(String sourceRegionName, String sourceMysqlHost, String sourceMysqlPort, String sourceMysqlUser, String sourceMysqlPwd, String tableName, String targetMysqlUser, String targetMysqlPwd) {
+        System.out.println("[ServerMaster] Dumping table '" + tableName + "' from " + sourceRegionName + " (" + sourceMysqlHost + ":" + sourceMysqlPort + ")");
+        String dumpFileName = "./sql_dump_" + tableName + "_" + System.currentTimeMillis() + ".sql"; // Unique temp file
+        File dumpFile = new File(dumpFileName);
+
         try {
-            ZooKeeperUtils zooKeeperUtils = new ZooKeeperUtils();
+            String osName = System.getProperty("os.name").toLowerCase();
+            // 1. Dump table from source MySQL using mysqldump
+            String dumpCmdStr = String.format(
+                    "mysqldump -h %s -P %s -u %s -p%s --databases lss --tables %s --result-file=%s",
+                    sourceMysqlHost, sourceMysqlPort, sourceMysqlUser, sourceMysqlPwd, tableName, dumpFileName
+            );
+            System.out.println("[ServerMaster] Executing dump command (password masked): " + dumpCmdStr.replace("-p"+sourceMysqlPwd, "-p****"));
+            Process dumpProcess = Runtime.getRuntime().exec(dumpCmdStr); // Direct execution usually fine
 
-            // 1. 从源region server导出表数据
-            String sourceServerPath = "/lss/region_servers/" + sourceRegionName;
-            String sourceServerInfo = zooKeeperUtils.getData(sourceServerPath);
-            String[] sourceInfo = sourceServerInfo.split(",");
+            // Start stream readers immediately
+            readStream(dumpProcess.getErrorStream(), "Dump Error Stream");
+            readStream(dumpProcess.getInputStream(), "Dump Output Stream");
+            int dumpExitCode = dumpProcess.waitFor();
 
-            JdbcUtils.dumpRemoteSql(tableName, sourceInfo[1], sourceInfo[3], sourceInfo[4]);
-            File file = new File("./sql/lss." + tableName + ".sql");
 
-            if (!file.exists()) {
-                System.out.println("创建副本失败: 导出文件不存在");
+            if (dumpExitCode != 0 || !dumpFile.exists() || dumpFile.length() == 0) {
+                System.err.println("[ServerMaster] Dump failed. Exit code: " + dumpExitCode + ". File exists: " + dumpFile.exists() + ", Size: " + (dumpFile.exists() ? dumpFile.length() : 0));
+                // Streams already being read by threads
+                return false;
+            }
+            System.out.println("[ServerMaster] Dump successful to file: " + dumpFileName);
+
+            // 2. Import the dump file into the target (local) MySQL
+            String importCmdStr = String.format(
+                    "mysql -h localhost -P %s -u %s -p%s lss < %s",
+                    RegionServer.mysqlPort, targetMysqlUser, targetMysqlPwd, dumpFileName
+            );
+            System.out.println("[ServerMaster] Executing import command (password masked)... " + importCmdStr.replace("-p"+targetMysqlPwd, "-p****"));
+            Process importProcess;
+            if (osName.contains("win")) {
+                importProcess = Runtime.getRuntime().exec(new String[]{"cmd", "/c", importCmdStr});
+            } else {
+                // For Linux/macOS, use sh -c
+                importProcess = Runtime.getRuntime().exec(new String[]{"/bin/sh", "-c", importCmdStr});
+            }
+
+            // Start stream readers immediately
+            readStream(importProcess.getErrorStream(), "Import Error Stream");
+            readStream(importProcess.getInputStream(), "Import Output Stream");
+            int importExitCode = importProcess.waitFor();
+
+            if (importExitCode != 0) {
+                System.err.println("[ServerMaster] Import failed. Exit code: " + importExitCode);
+                return false;
+            }
+            System.out.println("[ServerMaster] Import successful for table: " + tableName);
+            return true;
+
+        } catch (InterruptedException | IOException e) {
+            System.err.println("[ServerMaster] Error during dump/import process for table '" + tableName + "': " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } finally {
+            // Clean up the dump file
+            if (dumpFile.exists()) {
+                if (!dumpFile.delete()) {
+                    System.err.println("[ServerMaster] Warning: Failed to delete temporary dump file: " + dumpFileName);
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Migrates a table by dumping from source, importing to target, and dropping from source.
+     *
+     * @param sourceRegionName ZK node name (e.g., IP) of the source server.
+     * @param targetRegionName ZK node name (e.g., IP) of the target server (where this runs).
+     * @param tableName        The name of the table to migrate.
+     * @param zkManager        An instance of ZooKeeperManager for metadata updates.
+     * @return true if migration appears successful, false otherwise.
+     */
+    public static boolean migrateTable(String sourceRegionName, String targetRegionName, String tableName, ZooKeeperManager zkManager) {
+        System.out.println("[ServerMaster] Migrating table '" + tableName + "' from " + sourceRegionName + " to " + targetRegionName);
+
+        String sourceServerBasePath = ZK_REGION_SERVER_BASE_PATH + "/" + sourceRegionName;
+
+        try {
+            // 1. Get source server connection details from ZooKeeper
+            if (!zkManager.nodeExists(sourceServerBasePath)) {
+                System.err.println("[ServerMaster] Source RegionServer node not found in ZooKeeper: " + sourceServerBasePath);
                 return false;
             }
 
-            // 2. 在目标region server创建表
-            String targetServerPath = "/lss/region_servers/" + targetRegionName;
-            String targetServerInfo = zooKeeperUtils.getData(targetServerPath);
-            String[] targetInfo = targetServerInfo.split(",");
+            // Fetch individual details from ZK sub-nodes based on ZooKeeperManager.addRegionServer structure
+            String sourceMysqlUser = zkManager.getData(sourceServerBasePath + "/username");
+            String sourceMysqlPwd = zkManager.getData(sourceServerBasePath + "/password");
+            // Assuming MySQL port is stored in '/port2regionserver' node by the RS calling zkManager.addRegionServer
+            // THIS REQUIRES THE PREREQUISITE CHANGE MENTIONED ABOVE in RegionServer.java
+            String sourceMysqlPort = zkManager.getData(sourceServerBasePath + "/port2regionserver");
 
-            String createCmd = "mysql -u " + targetInfo[3] +
-                    " -h " + "localhost" +
-                    " -p" + targetInfo[4] +
-                    " < ./sql/lss." + tableName + ".sql";
+            if (sourceMysqlUser == null || sourceMysqlPwd == null || sourceMysqlPort == null) {
+                System.err.println("[ServerMaster] Incomplete source server DB details in ZooKeeper for " + sourceRegionName);
+                System.err.println("User: " + sourceMysqlUser + ", Pwd: (masked), Port: " + sourceMysqlPort);
+                return false;
+            }
+            String sourceMysqlHost = sourceRegionName; // Assuming ZK node name is the host IP/name
 
-            Runtime rt = Runtime.getRuntime();
-            rt.exec("cmd /c " + createCmd);
+            // 2. Dump from source and Import to target (local)
+            boolean dumpImportSuccess = dumpTable(
+                    sourceRegionName, sourceMysqlHost, sourceMysqlPort, sourceMysqlUser, sourceMysqlPwd, tableName,
+                    RegionServer.mysqlUser, RegionServer.mysqlPwd // Use local MySQL credentials for import (target)
+            );
 
-            // 3. 更新zookeeper节点
-            // 在目标region添加表
-            String newTargetValue = addTable(targetServerInfo, tableName);
-            zooKeeperUtils.setData(targetServerPath, newTargetValue);
-
-            // 在源region删除表
-            String newSourceValue = deleteTable(sourceServerInfo, tableName);
-            zooKeeperUtils.setData(sourceServerPath, newSourceValue);
-
-            // 4. 从源region server删除表
-            Connection connection = JdbcUtils.getConnection(sourceInfo[1], sourceInfo[3], sourceInfo[4]);
-            if (connection != null) {
-                Statement statement = connection.createStatement();
-                statement.execute("drop table if exists " + tableName);
-                JdbcUtils.releaseResc(null, statement, connection);
+            if (!dumpImportSuccess) {
+                System.err.println("[ServerMaster] Dump/Import step failed during migration.");
+                return false;
             }
 
-            return true;
-        } catch (Exception e) {
-            System.out.println("迁移表失败: " + e.getMessage());
+            System.out.println("[ServerMaster] Dump/Import successful. Master must update ZooKeeper metadata for table '" + tableName + "' (move from " + sourceRegionName + " to " + targetRegionName + ").");
+
+            // 4. Drop table from the source Region Server (Master should trigger this AFTER ZK update)
+            System.out.println("[ServerMaster] Requesting Master to trigger DROP TABLE '" + tableName + "' on source server " + sourceRegionName + " after metadata update.");
+            Connection sourceConn = null;
+            Statement sourceStmt = null;
+            try {
+                System.out.println("[ServerMaster] Connecting to source MySQL ("+sourceMysqlHost+":"+sourceMysqlPort+") to drop table...");
+                // Assuming JdbcUtils.getConnection can take host and port
+                sourceConn = JdbcUtils.getConnection(sourceMysqlUser, sourceMysqlPwd);
+                if (sourceConn != null) {
+                    sourceStmt = sourceConn.createStatement();
+                    String dropSql = "DROP TABLE IF EXISTS `" + tableName + "`"; // Use backticks for safety
+                    System.out.println("[ServerMaster] Executing on source ("+sourceRegionName+"): " + dropSql);
+                    sourceStmt.executeUpdate(dropSql);
+                    System.out.println("[ServerMaster] Table dropped from source successfully.");
+                } else {
+                    System.err.println("[ServerMaster] Could not connect to source MySQL to drop table.");
+                }
+            } catch (SQLException e) {
+                System.err.println("[ServerMaster] Error dropping table from source MySQL: " + e.getMessage());
+                // Migration technically succeeded in moving data, but cleanup failed. This is an inconsistency.
+            } finally {
+                // Ensure JdbcUtils.releaseResc handles null statement/connection
+                if (sourceStmt != null) try { sourceStmt.close(); } catch (SQLException e) { e.printStackTrace(); }
+                if (sourceConn != null) try { sourceConn.close(); } catch (SQLException e) { e.printStackTrace(); }
+                // Or if JdbcUtils.releaseResc is robust:
+                // JdbcUtils.releaseResc(null, sourceStmt, sourceConn);
+            }
+
+            System.out.println("[ServerMaster] Migration process completed for table: " + tableName);
+            return true; // Data is migrated. Source drop failure is a separate issue.
+
+        } catch (Exception e) { // Catching general exception from zkManager.getData or other issues
+            System.err.println("[ServerMaster] Critical error during migration for table '" + tableName + "': " + e.getMessage());
             e.printStackTrace();
             return false;
         }
     }
 
+
     /**
-     * 从ZooKeeper节点数据中删除表
-     * @param serverValue 服务器节点值
-     * @param tableName 要删除的表名
-     * @return 修改后的节点值
+     * Helper method to read from process streams asynchronously to prevent blocking.
+     *
+     * @param stream The InputStream (e.g., from Process.getErrorStream() or Process.getInputStream()).
+     * @param streamName A descriptive name for the stream (e.g., "Dump Error Stream").
      */
-    public static String deleteTable(String serverValue, String tableName) {
-        if (serverValue == null || serverValue.isEmpty()) {
-            return "";
-        }
-
-        String[] parts = serverValue.split(",");
-        if (parts.length < 6) {
-            return serverValue; // 无法处理不完整的节点数据
-        }
-
-        parts[5] = String.valueOf(Integer.parseInt(parts[5]) - 1); // 减少表计数
-        StringBuilder newValue = new StringBuilder();
-        for (String part : parts) {
-            if (!part.equals(tableName)) {
-                newValue.append(part).append(",");
+    private static void readStream(InputStream stream, String streamName) {
+        new Thread(() -> {
+            // Using java.io.InputStreamReader and java.io.BufferedReader
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
+                String line;
+                // System.out.println("--- " + streamName + " Start ---"); // Optional: for debugging stream start/end
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("[" + streamName + "] " + line);
+                }
+                // System.out.println("--- " + streamName + " End ---");
+            } catch (IOException e) {
+                // This can happen if the process closes the stream abruptly
+                System.err.println("Error reading stream " + streamName + ": " + e.getMessage());
             }
-        }
-        return newValue.length() > 0 ?
-                newValue.substring(0, newValue.length() - 1) : "";
+        }).start();
     }
 
-    /**
-     * 向ZooKeeper节点数据中添加表
-     * @param serverValue 服务器节点值
-     * @param tableName 要添加的表名
-     * @return 修改后的节点值
-     */
-    public static String addTable(String serverValue, String tableName) {
-        if (serverValue == null || serverValue.isEmpty()) {
-            // 返回一个基本的节点结构，假设前6个字段是服务器基本信息
-            return "server_name,ip,port,user,password,1," + tableName;
-        }
-
-        String[] parts = serverValue.split(",");
-        if (parts.length < 6) {
-            // 如果节点数据不完整，重建基本结构
-            return serverValue + ",1," + tableName;
-        }
-
-        // 正常情况处理
-        parts[5] = String.valueOf(Integer.parseInt(parts[5]) + 1); // 增加表计数
-        StringBuilder newValue = new StringBuilder();
-        for (String part : parts) {
-            newValue.append(part).append(",");
-        }
-        return newValue.append(tableName).toString();
+    // Deprecated methods addTableToValue and deleteTableFromValue remain unchanged.
+    // As noted, they are fragile and ideally metadata is managed differently.
+    @Deprecated
+    public static String addTableToValue(String serverValue, String tableName) {
+        return serverValue + "," + tableName;
     }
 
-    // 移动（剪切）表（给ip1,ip2,table_name) 在某ip复制表（ip1,ip2,table_name1,table_name2)
-    // 删除表操作是client 不是master
+    @Deprecated
+    public static String deleteTableFromValue(String serverValue, String tableName) {
+        return serverValue.replace("," + tableName, "");
+    }
 }

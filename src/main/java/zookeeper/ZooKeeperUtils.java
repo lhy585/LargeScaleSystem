@@ -14,16 +14,16 @@ import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 
-public class ZooKeeperUtils implements Watcher{
+public class ZooKeeperUtils implements Watcher {
 
 	private ZooKeeper zookeeper;
 	/**
 	 * 超时时间
 	 */
-	private static final int SESSION_TIME_OUT = 2000;
+	private static final int SESSION_TIME_OUT = 2000; // 建议适当调高，例如 5000ms
 	private CountDownLatch countDownLatch = new CountDownLatch(1);
-	
-	// 构造ZooKeeperUtils对象的时候初始化连接
+
+	// 构造函数等保持不变...
 	public ZooKeeperUtils(String host) {
 		try {
 			connectZookeeper(host);
@@ -33,19 +33,20 @@ public class ZooKeeperUtils implements Watcher{
 	}
 	public ZooKeeperUtils() {
 		try {
-			connectZookeeper("localhost:2181");
+			// 确保这里连接的是正确的 ZK 地址
+			connectZookeeper("127.0.0.1:2181"); // 或者从配置读取
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
-	
+
 	@Override
 	public void process(WatchedEvent event) {
 		if (event.getState() == KeeperState.SyncConnected) {
-			System.out.println("Watch received event");
+			System.out.println("Watch received event: SyncConnected"); // 更清晰的日志
 			countDownLatch.countDown();
 		}
-//		System.out.println(event);
+		// ... 其他的 process 逻辑保持不变
 		if(event.getType() == Event.EventType.NodeChildrenChanged){
 			System.out.println("Detected a client has created: " + event.getPath());
 			try{
@@ -67,100 +68,177 @@ public class ZooKeeperUtils implements Watcher{
 					case ADD_REGION_FAILURE:
 						System.out.println("Add region failed.");
 						break;
+					default: // 处理其他可能的枚举值
+						System.out.println("Add region returned: " + res);
 				}
 			}
 			catch(Exception e){
 				e.printStackTrace();
 			}
-
 		}
 		if(event.getType() == Event.EventType.NodeDeleted){
-			String ip=event.getPath();
-			ip=ip.substring(ip.indexOf('/')+1);
-			ip=ip.substring(ip.indexOf('/')+1);
-			ip=ip.substring(ip.indexOf('/')+1);
-			ip=ip.substring(0,ip.indexOf('/'));
-			System.out.println("Detected a client has disconnected: " + ip);
-			ResType res = RegionManager.delRegion(ip);
-			switch (res){
-				case DROP_REGION_NO_EXISTS:
-					System.out.println("Del region doesn't exist.");
-					break;
-				case DROP_REGION_SUCCESS:
-					System.out.println("Del region successfully.");
-					break;
-				case DROP_REGION_FAILURE:
-					System.out.println("Del region failed.");
-					break;
-			}
-			try{
-				deleteNodeRecursively("/lss/region_server/"+ip);
-			}
-			catch (Exception e){
-				e.printStackTrace();
+			String path = event.getPath();
+			// 从路径中提取IP应该更健壮
+			// 例如: /lss/region_server/192.168.140.1/exist -> 192.168.140.1
+			String prefix = "/lss/region_server/";
+			if (path.startsWith(prefix) && path.contains("/exist")) {
+				String ip = path.substring(prefix.length(), path.indexOf("/exist"));
+				System.out.println("Detected a client has disconnected: " + ip);
+				ResType res = RegionManager.delRegion(ip);
+				switch (res){
+					case DROP_REGION_NO_EXISTS:
+						System.out.println("Del region doesn't exist.");
+						break;
+					case DROP_REGION_SUCCESS:
+						System.out.println("Del region successfully.");
+						break;
+					case DROP_REGION_FAILURE:
+						System.out.println("Del region failed.");
+						break;
+					default: // 处理其他可能的枚举值
+						System.out.println("Del region returned: " + res);
+				}
+				// 删除父节点 /lss/region_server/ip 的操作应该由RegionManager决定，
+				// 或者在 ZK 会话超时后自动清理（如果父节点也是临时的，但这里不是）
+				// 如果 RegionManager.delRegion 负责清理，这里就不需要重复删除
+			} else {
+				System.out.println("NodeDeleted event for unexpected path: " + path);
 			}
 		}
 		if(event.getType() == Event.EventType.NodeDataChanged ){
-			String ip=event.getPath();
-			ip=ip.substring(ip.indexOf('/')+1);
-			ip=ip.substring(ip.indexOf('/')+1);
-			ip=ip.substring(ip.indexOf('/')+1);
-			ip=ip.substring(0,ip.indexOf('/'));
-			try{
-				String data;
-				if((data=getMasterData(event.getPath()))!=null){
-					//TODO: 地址为ip的region给master发送消息data
-
+			String path = event.getPath();
+			// 提取IP
+			String prefix = "/lss/region_server/";
+			if (path.startsWith(prefix) && path.contains("/data")) {
+				String ip = path.substring(prefix.length(), path.indexOf("/data"));
+				try{
+					String data;
+					if((data=getMasterData(path))!=null){ // 假设 getMasterData 返回 null 如果是对方发的消息
+						//TODO: 地址为ip的region给master发送消息data
+						System.out.println("[Watcher] Master should process data from RegionServer " + ip + ": " + data);
+					}
+					else if ((data=getRegionData(path))!=null){ // 假设 getRegionData 返回 null 如果是对方发的消息
+						//TODO: master给地址为ip的region发送消息data
+						System.out.println("[Watcher] RegionServer " + ip + " should process data from Master: " + data);
+					}
 				}
-				else{
-					data=getRegionData(event.getPath());
-					//TODO: master给地址为ip的region发送消息data
-
+				catch(Exception e){
+					e.printStackTrace();
 				}
-			}
-			catch(Exception e){
-				e.printStackTrace();
+			} else {
+				System.out.println("NodeDataChanged event for unexpected path: " + path);
 			}
 		}
 	}
 
+
 	/**
 	 * 连接Zookeeper
-     */
-	public void connectZookeeper(String host) throws Exception{
+	 */
+	public void connectZookeeper(String host) throws Exception {
 		zookeeper = new ZooKeeper(host, SESSION_TIME_OUT, this);
-		countDownLatch.await();
+		boolean connected = countDownLatch.await(SESSION_TIME_OUT + 1000, java.util.concurrent.TimeUnit.MILLISECONDS); // Add timeout
+		if (!connected) {
+			System.err.println("[Error] Timed out waiting for ZooKeeper connection to " + host);
+			throw new RuntimeException("Timed out waiting for ZooKeeper connection");
+		}
 		System.out.println("[Info]Zookeeper connection success.");
 	}
 
 	/**
-	 * 创建节点
-     */
+	 * 递归确保路径存在 (创建所有不存在的父路径)
+	 */
+	public void ensurePathExists(String path) throws KeeperException, InterruptedException {
+		if (path == null || path.isEmpty() || path.equals("/")) {
+			return;
+		}
+		if (nodeExists(path)) {
+			return;
+		}
+		// 创建父路径
+		int lastSlash = path.lastIndexOf('/');
+		if (lastSlash > 0) { // 不是根目录也不是根目录下的直接子节点
+			ensurePathExists(path.substring(0, lastSlash));
+		}
+		// 创建当前节点
+		try {
+			System.out.println("[ZooKeeperUtils] Creating ZK path: " + path);
+			this.zookeeper.create(path, "".getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+		} catch (KeeperException.NodeExistsException nee) {
+			// 如果在检查和创建之间，其他线程/进程创建了它，忽略
+		}
+	}
+
+
+	/**
+	 * 创建节点 (如果不存在) 或设置数据 (如果存在).
+	 * 对于临时节点，如果已存在持久节点，会尝试删除再创建。
+	 */
+	public void createOrSetData(String path, String data, CreateMode mode) throws Exception {
+		ensurePathExists(path.substring(0, path.lastIndexOf('/'))); // 确保父路径存在
+
+		if (mode == CreateMode.EPHEMERAL || mode == CreateMode.EPHEMERAL_SEQUENTIAL) {
+			try {
+				// 对于临时节点，我们总是尝试创建它，会话结束时它会自动消失。
+				// 如果因为某种原因（例如，一个持久节点占用了路径）而创建失败，下面的catch会处理。
+				createTempNode(path, data);
+			} catch (KeeperException.NodeExistsException e) {
+				System.out.println("[ZooKeeperUtils] WARN: Ephemeral node " + path + " encountered NodeExists. Trying to delete existing and recreate.");
+				try {
+					// 可能是因为一个持久节点错误地存在于此
+					// 或者 ZK 会话恢复时的一个罕见情况
+					deleteNode(path); // 尝试删除任何已存在的节点 (可能是持久的)
+					createTempNode(path, data); // 再次尝试创建临时节点
+				} catch (Exception ex) {
+					System.err.println("[ZooKeeperUtils] ERROR: Failed to delete and recreate ephemeral node " + path + ": " + ex.getMessage());
+					throw e; // 重新抛出原始的 NodeExistsException 或新的异常
+				}
+			} catch (Exception e) { // 其他来自 createTempNode 的异常
+				System.err.println("[ZooKeeperUtils] ERROR: Failed to create ephemeral node " + path + ": " + e.getMessage());
+				throw e;
+			}
+		} else { // Persistent or PersistentSequential
+			if (nodeExists(path)) {
+				try {
+					setData(path, data);
+				} catch (KeeperException.NoNodeException nne) {
+					// 节点在检查存在和设置数据之间被删除了，尝试创建
+					createNode(path, data);
+				}
+			} else {
+				createNode(path, data);
+			}
+		}
+	}
+
+	// ... 其他方法 createNode, createTempNode, getChildren, setWatch, getData, setData, deleteNode 等保持不变 ...
 	public String createNode(String path,String data) throws Exception{
-		System.out.println("call ZooKeeperUtils.createNode");
+		System.out.println("call ZooKeeperUtils.createNode " + path);
 		return this.zookeeper.create(path, data.getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 	}
 
 	public String createTempNode(String path,String data) throws Exception{
+		// 确保父路径存在
+		ensurePathExists(path.substring(0, path.lastIndexOf('/')));
+		System.out.println("call ZooKeeperUtils.createTempNode " + path);
 		return this.zookeeper.create(path,data.getBytes(),Ids.OPEN_ACL_UNSAFE,CreateMode.EPHEMERAL);
 	}
-
-	/**
-	 * 获取路径下所有子节点
-     */
 	public List<String> getChildren(String path) throws KeeperException, InterruptedException{
 		System.out.println("call ZooKeeperUtils.getchildren " + path);
 		List<String> children = zookeeper.getChildren(path, false);
 		return children;
 	}
-
 	public void setWatch(String path) throws Exception{
-		zookeeper.getChildren(path,true);
+		// 对于数据节点，我们通常监视 NodeDataChanged 或 NodeDeleted
+		// 对于父节点，我们通常监视 NodeChildrenChanged
+		// 这里的实现是监视子节点变化
+		if (nodeExists(path)) { // 只有当节点存在时才能设置watch
+			zookeeper.getChildren(path,true);
+			zookeeper.exists(path, true); // 也监视节点本身(删除/数据改变)
+		} else {
+			System.out.println("[ZooKeeperUtils] WARN: Cannot set watch on non-existent path: " + path);
+		}
 	}
-
-	/**
-	 * 获取节点上面的数据
-     */
 	public String getData(String path) throws KeeperException, InterruptedException{
 		System.out.println("call ZooKeeperUtils.getData " + path);
 		byte[] data = zookeeper.getData(path, false, null);
@@ -169,131 +247,88 @@ public class ZooKeeperUtils implements Watcher{
 		}
 		return new String(data);
 	}
-
-	/**
-	 * 设置节点信息
-	 * @param path  路径
-	 * @param data  数据
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
-	 */
 	public Stat setData(String path,String data) throws KeeperException, InterruptedException{
 		System.out.println("call ZooKeeperUtils.setData " + path);
 		Stat stat = zookeeper.setData(path, data.getBytes(), -1);
 		return stat;
 	}
-
-	/**
-	 * 删除节点
-	 * @param path
-	 * @throws InterruptedException
-	 * @throws KeeperException
-	 */
 	public void deleteNode(String path) throws InterruptedException, KeeperException{
 		zookeeper.delete(path, -1);
 	}
 	public void deleteNodeRecursively(String path) throws Exception {
-		// 获取当前节点的所有子节点
 		List<String> children = zookeeper.getChildren(path,false);
-
-		// 递归删除所有子节点
 		for (String child : children) {
-			deleteNodeRecursively(path + "/" + child);  // 删除子节点
+			deleteNodeRecursively(path + "/" + child);
 		}
-
-		// 删除当前节点
 		zookeeper.delete(path,-1);
-//		System.out.println("Deleted node: " + path);
 	}
-	/**
-	 * 获取创建时间
-	 * @param path
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
-	 */
 	public String getCTime(String path) throws KeeperException, InterruptedException{
 		Stat stat = zookeeper.exists(path, false);
 		return String.valueOf(stat.getCtime());
 	}
-
-	/**
-	 * 获取某个路径下孩子的数量
-	 * @param path
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
-	 */
 	public Integer getChildrenNum(String path) throws KeeperException, InterruptedException{
 		int childenNum = zookeeper.getChildren(path, false).size();
 		return childenNum;
 	}
-	/**
-	 * 关闭连接
-	 * @throws InterruptedException
-	 */
 	public void closeConnection() throws InterruptedException{
 		System.out.println("call close Connection");
 		if (zookeeper != null) {
 			zookeeper.close();
 		}
 	}
-	//从path中取出master的信息。
 	public String getMasterData(String path){
 		try{
 			String data=getData(path);
-			String reserve_data=data.substring(data.indexOf('\n'));
-			data=data.substring(0,data.indexOf('\n'));
-			String label=data.substring(data.indexOf('('),data.indexOf(')'));
+			String[] lines = data.split("\n", 2);
+			String masterLine = lines[0];
+			String regionLine = (lines.length > 1) ? lines[1] : "region(received):"; // 默认
 
-
-			data=data.substring(data.indexOf(':')+1);
-			if(label.equals("received")){
+			if(masterLine.startsWith("master(received):")){
 				System.out.println("当前master的信息已接收，不再重复接收");
 				return null;
 			}
-			else{
-				System.out.println("master传递的信息为: "+data);
-				setData(path,"master(received):"+data+reserve_data);
-				return data;
+			else if (masterLine.startsWith("master(unreceived):")){
+				String masterData = masterLine.substring("master(unreceived):".length());
+				System.out.println("master传递的信息为: "+masterData);
+				setData(path,"master(received):"+masterData+"\n"+regionLine);
+				return masterData;
 			}
 		}
 		catch(Exception e){
 			e.printStackTrace();
-			return null;
 		}
-//		return null;
+		return null;
 	}
 	public String getRegionData(String path){
 		try{
 			String data=getData(path);
-			String reserve_data=data.substring(0,data.indexOf('\n'));
-			data=data.substring(data.indexOf('\n')+1);
-			String label=data.substring(data.indexOf('('),data.indexOf(')'));
-			data=data.substring(data.indexOf(':')+1);
-			if(label.equals("received")){
+			String[] lines = data.split("\n", 2);
+			String masterLine = lines[0];
+			String regionLine = (lines.length > 1) ? lines[1] : "region(received):";
+
+			if(regionLine.startsWith("region(received):")){
 				System.out.println("当前region的信息已接收，不再重复接收");
 				return null;
 			}
-			else{
-				System.out.println("region传递的信息为: "+data);
-				setData(path,reserve_data+"region(received):"+data);
-				return data;
+			else if (regionLine.startsWith("region(unreceived):")) {
+				String regionData = regionLine.substring("region(unreceived):".length());
+				System.out.println("region传递的信息为: "+regionData);
+				setData(path,masterLine+"\n"+"region(received):"+regionData);
+				return regionData;
 			}
 		}
 		catch(Exception e){
 			e.printStackTrace();
-			return null;
 		}
+		return null;
 	}
-
 	public boolean nodeExists(String path) {
 		try {
-			Stat stat = zookeeper.exists(path, false);
+			Stat stat = zookeeper.exists(path, false); // false 表示不设置默认监视器
 			return stat != null;
 		} catch (KeeperException | InterruptedException e) {
-			e.printStackTrace();
+			// 连接问题等可能导致异常，此时视为节点不存在或无法确认
+			System.err.println("[ZooKeeperUtils] Error checking node existence for " + path + ": " + e.getMessage());
 			return false;
 		}
 	}

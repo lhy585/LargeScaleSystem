@@ -1,269 +1,190 @@
 package regionserver;
 
 import java.io.*;
-import java.net.*;
-import java.sql.*;
+import java.net.Socket;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 
-import org.apache.curator.framework.CuratorFramework;
+import zookeeper.TableInform; // Keep if tables list is used, otherwise remove
 
+/**
+ * Handles a single connection to the RegionServer's listening port.
+ * Primarily expects direct connections from User Clients for SELECT queries.
+ */
 public class ServerThread implements Runnable {
-    public Socket socket;
-    public String serverIdentity = null;
-    public BufferedReader reader = null;
-    public ArrayList<TableInfo> tables;
-    public Statement statement;
-    public BufferedWriter writer = null;
+    private final Socket socket;
+    private final Statement statement; // Use the shared statement from RegionServer
+    // private final ArrayList<TableInform> tables; // Likely unused now
+    private BufferedReader reader = null;
+    private BufferedWriter writer = null;
 
-    ServerThread(Socket socket, Statement statement, ArrayList<TableInfo> tables) {
+    // Pass the shared statement from RegionServer
+    ServerThread(Socket socket, Statement statement, ArrayList<TableInform> tables) {
         this.socket = socket;
-        this.tables = tables;
         this.statement = statement;
+        // this.tables = tables; // Store if needed, otherwise remove
+        System.out.println("[ServerThread " + Thread.currentThread().getId() + "] Handling connection from " + socket.getRemoteSocketAddress());
     }
 
     @Override
     public void run() {
         try {
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
-            String line;
+            // Use UTF-8 for consistency
+            reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
+            writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"));
 
-            // 处理初始连接身份识别
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith("CONNECT ")) {
-                    serverIdentity = line.substring(8);
-                    System.out.println(serverIdentity + "已连接");
-                    break;
-                }
-                if (line.equals("exit")) {
-                    System.out.println(socket.getInetAddress().getHostAddress() + "正在退出连接！");
-                    break;
-                }
-            }
+            // Assume connection is from a User Client sending SQL (likely SELECT)
+            serveUserClient();
 
-            // 根据身份调用不同服务方法
-            if (serverIdentity != null) {
-                switch (serverIdentity) {
-                    case "CLIENT":
-                        serveClient();
-                        break;
-                    case "MASTER":
-                        serveMaster();
-                        break;
-                    case "REGION SERVER":
-                        serveRegionServer();
-                        break;
-                    default:
-                        System.out.println("未知连接类型: " + serverIdentity);
-                }
-            }
         } catch (IOException e) {
-            System.out.println("连接处理错误: " + e.getMessage());
-            e.printStackTrace();
-        } finally {
+            // Avoid logging errors if the socket was closed intentionally or by the client
+            if (!socket.isClosed()) {
+                System.err.println("[ServerThread " + Thread.currentThread().getId() + "] IOException: " + e.getMessage() + " for client " + socket.getRemoteSocketAddress());
+                // e.printStackTrace(); // Uncomment for detailed debugging
+            }
+        } catch (Exception e) {
+            System.err.println("[ServerThread " + Thread.currentThread().getId() + "] Unexpected Exception: " + e.getMessage() + " for client " + socket.getRemoteSocketAddress());
+            e.printStackTrace(); // Log unexpected errors
             try {
+                reactCmd(false, "Internal server error: " + e.getMessage());
+            } catch (IOException ignored) {} // Best effort to inform client
+        }
+        finally {
+            try {
+                if (reader != null) reader.close();
+                if (writer != null) writer.close();
                 if (socket != null && !socket.isClosed()) {
                     socket.close();
                 }
+                System.out.println("[ServerThread " + Thread.currentThread().getId() + "] Connection closed for " + socket.getRemoteSocketAddress());
             } catch (IOException e) {
-                System.out.println("关闭socket时出错: " + e.getMessage());
+                System.err.println("[ServerThread " + Thread.currentThread().getId() + "] Error closing resources: " + e.getMessage());
             }
         }
     }
 
     /**
-     * 服务客户端请求
+     * Services requests assuming the connection is from a User Client.
+     * Expects SQL commands, primarily SELECT.
      */
-    public void serveClient() throws IOException {
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("收到客户端请求: " + line);
+    public void serveUserClient() throws IOException {
+        String sqlCommand;
+        while ((sqlCommand = reader.readLine()) != null) {
+            System.out.println("[ServerThread " + Thread.currentThread().getId() + "] Received SQL from Client " + socket.getRemoteSocketAddress() + ": " + sqlCommand);
 
-            if (line.equals("exit")) {
-                System.out.println(socket.getInetAddress().getHostAddress() + "正在退出连接！");
+            if ("exit".equalsIgnoreCase(sqlCommand.trim())) {
+                System.out.println("[ServerThread " + Thread.currentThread().getId() + "] Client " + socket.getRemoteSocketAddress() + " requested exit.");
                 break;
             }
 
-            try {
-                String[] parts = line.split(" ", 3); // 分割命令、表名和剩余部分
-                if (parts.length < 2) {
-                    reactCmd(false, "无效命令格式");
-                    continue;
-                }
-
-                String command = parts[0].toLowerCase();
-                String tableName = parts[1];
-                String rest = parts.length > 2 ? parts[2] : "";
-
-                synchronized (this) {
-                    switch (command) {
-                        case "create":
-                            System.out.println("处理创建表请求");
-                            boolean createRes = ServerClient.createTable(tableName, line);
-                            reactCmd(createRes, createRes ? "表创建成功" : "表创建失败");
-                            break;
-                        case "insert":
-                        case "delete":
-                            System.out.println("处理数据操作请求");
-                            boolean executeRes = ServerClient.executeCmd(line);
-                            reactCmd(executeRes, executeRes ? "操作执行成功" : "操作执行失败");
-                            break;
-                        case "select":
-                            System.out.println("处理查询请求");
-                            String queryResult = ServerClient.selectTable(line);
-                            writer.write("SUCCESS:" + queryResult + "\n");
-                            writer.flush();
-                            break;
-                        case "drop":
-                            System.out.println("处理删除表请求");
-                            boolean dropRes = ServerClient.dropTable(tableName);
-                            reactCmd(dropRes, dropRes ? "表删除成功" : "表删除失败");
-                            break;
-                        default:
-                            System.out.println("未知客户端指令: " + line);
-                            reactCmd(false, "未知指令");
-                    }
-                }
-            } catch (Exception e) {
-                System.out.println("处理客户端请求时出错: " + e.getMessage());
-                reactCmd(false, "处理请求时出错: " + e.getMessage());
+            // Process SQL command (mainly expect SELECT here)
+            String trimmedCommand = sqlCommand.trim().toLowerCase();
+            if (trimmedCommand.startsWith("select")) {
+                handleDirectSelect(sqlCommand);
+            } else {
+                System.err.println("[ServerThread " + Thread.currentThread().getId() + "] Received non-SELECT command from direct client connection: " + sqlCommand);
+                reactCmd(false, "ERROR: This connection only supports SELECT queries.");
+                // Optionally, could execute other commands if design allows, but
+                // generally DDL/DML go through the Master.
+                // boolean success = ServerClient.executeCmd(sqlCommand);
+                // reactCmd(success, success ? "Command executed." : "Command failed.");
             }
         }
     }
 
     /**
-     * 服务Master节点请求
+     * Handles a SELECT query received directly from a client.
+     * Executes the query and sends results back row by row.
+     *
+     * @param sqlSelectCommand The SELECT SQL command.
+     * @throws IOException If communication fails.
      */
+    private void handleDirectSelect(String sqlSelectCommand) throws IOException {
+        ResultSet rs = null;
+        try {
+            if (statement == null || statement.isClosed()) {
+                throw new SQLException("Database statement is not available.");
+            }
+            // Synchronize if statement is not thread-safe, though typically it is for execution.
+            // synchronized(statement) { // Usually not needed for executeQuery
+            rs = statement.executeQuery(sqlSelectCommand);
+            // }
+
+            ResultSetMetaData rsmd = rs.getMetaData();
+            int columnCount = rsmd.getColumnCount();
+
+            // Send column names as the first line (optional, depends on client expectation)
+            // StringBuilder header = new StringBuilder();
+            // for (int i = 1; i <= columnCount; i++) {
+            //     header.append(rsmd.getColumnName(i)).append(i == columnCount ? "" : "\t"); // Tab separated
+            // }
+            // writer.write("COLUMNS:" + header.toString() + "\n"); // Example prefix
+
+            // Send data rows
+            int rowCount = 0;
+            while (rs.next()) {
+                StringBuilder row = new StringBuilder();
+                for (int i = 1; i <= columnCount; i++) {
+                    // Get string representation, handle NULLs gracefully
+                    String value = rs.getString(i);
+                    row.append(value == null ? "NULL" : value);
+                    if (i < columnCount) {
+                        row.append("\t"); // Use a clear delimiter (e.g., tab)
+                    }
+                }
+                writer.write(row.toString() + "\n"); // Send one row per line
+                rowCount++;
+            }
+            // Send an end-of-data marker
+            writer.write("END_OF_DATA\n");
+            writer.flush();
+            System.out.println("[ServerThread " + Thread.currentThread().getId() + "] Sent " + rowCount + " rows for query.");
+
+        } catch (SQLException e) {
+            System.err.println("[ServerThread " + Thread.currentThread().getId() + "] SQLException executing SELECT: " + e.getMessage());
+            // Inform the client about the error
+            reactCmd(false, "ERROR executing query: " + e.getMessage());
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException e) { /* ignore */ }
+            }
+        }
+    }
+
+
+    // --- Methods for handling Master/RegionServer identified connections (if needed) ---
+    // These might be removed if all Master communication goes via regionserver.Client
+    // and RS-to-RS communication uses a different mechanism or port.
+
+    /*
     public void serveMaster() throws IOException {
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("收到Master请求: " + line);
-
-            if (line.equals("exit")) {
-                System.out.println(socket.getInetAddress().getHostAddress() + "正在退出连接！");
-                break;
-            }
-
-            try {
-                String[] parts = line.split(" ", 3); // 分割命令和参数
-                if (parts.length < 2) {
-                    reactCmd(false, "无效命令格式");
-                    continue;
-                }
-
-                String command = parts[0].toLowerCase();
-                String params = parts[1];
-
-                synchronized (this) {
-                    switch (command) {
-                        case "migrate":
-                            System.out.println("处理表迁移请求");
-                            // 参数格式: sourceServerName@ip:port:user:password:tableName
-                            String[] migrateParams = params.split("@");
-                            if (migrateParams.length == 2) {
-                                String[] serverInfo = migrateParams[1].split(":");
-                                if (serverInfo.length >= 4) {
-                                    reactCmd(true, "表迁移请求已接收");
-                                }
-                            }
-                            break;
-                        case "dump":
-                            System.out.println("处理创建副本请求");
-                            // 参数格式: sourceServerName@ip:port:user:password:tableName
-                            String[] dumpParams = params.split("@");
-                            if (dumpParams.length == 2) {
-                                String[] serverInfo = dumpParams[1].split(":");
-                                if (serverInfo.length >= 4) {
-                                    ServerMaster.dumpTable(
-                                            dumpParams[0],  // sourceServerName
-                                            serverInfo[0],  // ip
-                                            serverInfo[1],  // port
-                                            serverInfo[2],  // user
-                                            serverInfo[3],  // password
-                                            parts.length > 2 ? parts[2] : "" // tableName
-                                    );
-                                    reactCmd(true, "副本创建请求已接收");
-                                }
-                            }
-                            break;
-                        default:
-                            System.out.println("未知Master指令: " + line);
-                            reactCmd(false, "未知指令");
-                    }
-                }
-            } catch (Exception e) {
-                System.out.println("处理Master请求时出错: " + e.getMessage());
-                reactCmd(false, "处理请求时出错: " + e.getMessage());
-            }
-        }
+        // Logic to handle commands specifically from a connection identified as Master
+        // ... (Example: Trigger migration, dump)
+        reactCmd(true, "Master command received.");
     }
 
-    /**
-     * 服务RegionServer节点请求
-     */
     public void serveRegionServer() throws IOException {
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("收到RegionServer请求: " + line);
-
-            if (line.equals("exit")) {
-                System.out.println(socket.getInetAddress().getHostAddress() + "正在退出连接！");
-                break;
-            }
-
-            try {
-                String[] parts = line.split(" ", 3); // 分割命令、表名和剩余部分
-                if (parts.length < 2) {
-                    reactCmd(false, "无效命令格式");
-                    continue;
-                }
-
-                String command = parts[0].toLowerCase();
-                String tableName = parts[1];
-                String rest = parts.length > 2 ? parts[2] : "";
-
-                synchronized (this) {
-                    switch (command) {
-                        case "create":
-                            System.out.println("处理同步创建表请求");
-                            // 实现同步创建表逻辑
-                            reactCmd(true, "同步请求已接收");
-                            break;
-                        case "insert":
-                        case "delete":
-                            System.out.println("处理同步数据操作请求");
-                            // 实现同步数据操作逻辑
-                            reactCmd(true, "同步请求已接收");
-                            break;
-                        case "dump":
-                            System.out.println("处理同步创建副本请求");
-                            // 实现同步创建副本逻辑
-                            reactCmd(true, "同步请求已接收");
-                            break;
-                        case "drop":
-                            System.out.println("处理同步删除表请求");
-                            // 实现同步删除表逻辑
-                            reactCmd(true, "同步请求已接收");
-                            break;
-                        default:
-                            System.out.println("未知RegionServer指令: " + line);
-                            reactCmd(false, "未知指令");
-                    }
-                }
-            } catch (Exception e) {
-                System.out.println("处理RegionServer请求时出错: " + e.getMessage());
-                reactCmd(false, "处理请求时出错: " + e.getMessage());
-            }
-        }
+        // Logic to handle commands specifically from a connection identified as another RegionServer
+        // ... (Example: Receive migrated data)
+         reactCmd(true, "RegionServer command received.");
     }
+    */
 
     /**
-     * 响应命令执行结果
-     * @param success 是否成功
-     * @param message 响应消息
+     * Responds to the connected client/master/server.
+     * Prefixes with SUCCESS: or ERROR:.
+     * @param success Whether the operation was successful.
+     * @param message The message to send.
      */
     private void reactCmd(boolean success, String message) throws IOException {
-        writer.write((success ? "SUCCESS:" : "ERROR:") + message + "\n");
-        writer.flush();
+        if (writer != null && !socket.isClosed()) {
+            writer.write((success ? "SUCCESS: " : "ERROR: ") + message + "\n");
+            writer.flush();
+        }
     }
 }

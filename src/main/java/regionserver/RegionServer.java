@@ -1,275 +1,338 @@
 package regionserver;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.ServerSocket;
-import java.sql.*;
-import java.util.*;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-
-import javax.net.ServerSocketFactory;
-
 import java.io.IOException;
 import java.net.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.*;
+
+import javax.net.ServerSocketFactory;
 
 import org.apache.zookeeper.KeeperException;
 import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
 
-class TableInfo {
-    public String tableName;
-    public boolean slave;
-    public String slaveIp;
-    public String slavePort;
-    public String slaveUsr;
-    public String slavePwd;
-    public String slaveSqlPort;
-
-    TableInfo(String tableName){
-        this.slave = false;
-        this.tableName = tableName;
-        this.slaveUsr = "root";
-        this.slavePwd = "123";
-        this.slaveSqlPort = "3306";
-    }
-    public void setSlave(String ip, String port){
-        this.slave = true;
-        this.slaveIp = ip;
-        this.slavePort = port;
-    }
-}
-
-public class RegionServer implements Runnable {
+public class RegionServer {
     public static String ip;
-    public static String port;
+    public static String masterCommPort = "5001"; // Port Master listens for RegionServers
+    public static String clientListenPort = "4001"; // Port this RegionServer listens for direct clients
     public static String mysqlUser;
     public static String mysqlPwd;
+    public static String mysqlPort = "3306"; // MySQL instance port
 
     public static Connection connection = null;
     public static Statement statement = null;
 
     public static ServerSocket serverSocket = null;
     public static ThreadPoolExecutor threadPoolExecutor = null;
+    public static ZooKeeperManager zooKeeperManager = null; // Make ZK manager accessible if needed by ServerThread/Client
 
-    public static Boolean quitSignal = false;
-    public static List<TableInform> tables;
+    public static volatile boolean quitSignal = false; // Renamed for clarity
+    public static List<TableInform> tables; // This might be redundant if Master/ZK manages all metadata
 
-    public static String serverPath;
-    public static String serverValue;
+    public static String serverPath; // ZK path for this server
+    // serverValue is not explicitly needed here if ZK updates are handled by Master/ZKManager
 
     static {
         ip = getIPAddress();
-        mysqlUser = "root";
-        mysqlPwd = "040517cc";
-        port = "5001";
-        tables = new ArrayList<>();
+        mysqlUser = "root"; // Example user
+        mysqlPwd = "040517cc"; // Example password - Use secure methods in production
+        tables = new ArrayList<>(); // Initialize list
     }
 
-    @Override
-    public void run() {
-        ZooKeeperManager zooKeeperManager = initRegionServer();
-
-        // 主动连接 Master
-        try (Socket masterSocket = new Socket("127.0.0.1", Integer.parseInt(port)); // 连接 Master
-             BufferedReader in = new BufferedReader(new InputStreamReader(masterSocket.getInputStream()));
-             PrintWriter out = new PrintWriter(masterSocket.getOutputStream(), true)) {
-
-            System.out.println("[RegionServer] Connected to Master!");
-
-            // 发送注册消息
-            out.println("REGISTER_REGION_SERVER");
-            out.flush();
-
-            // 等待 Master 的响应
-            String response = in.readLine();
-            System.out.println("[RegionServer] Master response: " + response);
-
-            // 持续接收 Master 的指令
-            String command;
-            while ((command = in.readLine()) != null) {
-                System.out.println("[RegionServer] Received command: " + command);
-                // 处理 Master 的指令（如 CREATE_TABLE, INSERT_DATA 等）
-                if (command.equals("QUIT")) {
-                    break;
-                }
-            }
-        } catch (IOException e) {
-            System.err.println("[RegionServer] Failed to connect to Master: " + e.getMessage());
-        }
-    }
-
+    /**
+     * Initializes the RegionServer's static resources: ZK connection, DB connection,
+     * listening socket, and thread pool. Registers with ZooKeeper.
+     *
+     * @return Initialized ZooKeeperManager instance.
+     * @throws RuntimeException if initialization fails critically.
+     */
     public static ZooKeeperManager initRegionServer() {
-        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
-        System.out.println("Initializing RegionServer...");
+        zooKeeperManager = new ZooKeeperManager(); // Initialize ZK Manager first
+        System.out.println("[RegionServer] Initializing...");
 
-        // 动态选择可用端口
-        port = String.valueOf(getAvailableTcpPort());
-        System.out.println("Selected port: " + port);
-
-        // 确保每次初始化都创建新的连接和statement
+        // Initialize Database Connection
         try {
-            if (connection != null) {
+            System.out.println("[RegionServer] Setting up MySQL connection...");
+            if (connection != null && !connection.isClosed()) {
                 connection.close();
             }
-            connection = JdbcUtils.getConnection(mysqlUser, mysqlPwd);
+            connection = JdbcUtils.getConnection(mysqlUser, mysqlPwd); // Assuming getConnection takes port
             if (connection != null) {
                 statement = connection.createStatement();
+                System.out.println("[RegionServer] MySQL connection established.");
+                clearMysqlData(); // Clear data on initialization
             } else {
                 throw new SQLException("Failed to establish database connection.");
             }
         } catch (SQLException e) {
-            System.out.println("Failed to initialize database connection: " + e.getMessage());
+            System.err.println("[RegionServer] FATAL: Failed to initialize database connection: " + e.getMessage());
             e.printStackTrace();
-            // 根据需求决定是否抛出异常或继续
+            throw new RuntimeException("Database initialization failed", e);
         }
 
-        System.out.println("Clearing MySQL data...");
-        clearMysqlData();
-
-        System.out.println("Creating ZooKeeper node...");
+        // Register with ZooKeeper
+        System.out.println("[RegionServer] Registering with ZooKeeper...");
         createZooKeeperNode(zooKeeperManager);
 
-        System.out.println("Creating socket and thread pool...");
+        // Create Listening Socket and Thread Pool
+        System.out.println("[RegionServer] Creating listening socket and thread pool...");
         createSocketAndThreadPool();
 
+        System.out.println("[RegionServer] Initialization complete. Listening on port " + clientListenPort);
         return zooKeeperManager;
     }
 
+    /**
+     * Clears the specific database ('lss') used by this RegionServer.
+     * Should be used carefully, typically only during initialization or testing.
+     */
     public static void clearMysqlData() {
-        if (connection != null && statement != null) {
+        if (statement != null) {
             try {
-                // 删除已有数据库
-                String deleteDB = "DROP DATABASE IF EXISTS lss";
-                statement.execute(deleteDB);
-                // 重新创建数据库
-                String createDB = "CREATE DATABASE IF NOT EXISTS lss";
-                statement.execute(createDB);
-
-                // 使用新创建的数据库
-                String useDB = "USE lss";
-                statement.execute(useDB);
-            } catch (Exception e) {
-                System.out.println("Error clearing MySQL data: " + e.getMessage());
+                System.out.println("[RegionServer] Clearing MySQL database 'lss'...");
+                // Use the database before dropping/creating tables within it
+                statement.execute("CREATE DATABASE IF NOT EXISTS lss");
+                statement.execute("USE lss");
+                // Example: Drop tables if they exist (more robust than dropping DB)
+                // ResultSet rs = statement.executeQuery("SHOW TABLES");
+                // List<String> tablesToDrop = new ArrayList<>();
+                // while (rs.next()) {
+                //     tablesToDrop.add(rs.getString(1));
+                // }
+                // rs.close();
+                // for (String tableName : tablesToDrop) {
+                //     System.out.println("[RegionServer] Dropping table: " + tableName);
+                //     statement.execute("DROP TABLE IF EXISTS " + tableName);
+                // }
+                // Or, if really needed:
+                // statement.execute("DROP DATABASE IF EXISTS lss");
+                // statement.execute("CREATE DATABASE lss");
+                // statement.execute("USE lss");
+                System.out.println("[RegionServer] MySQL database 'lss' cleared/prepared.");
+            } catch (SQLException e) {
+                System.err.println("[RegionServer] Error clearing MySQL data: " + e.getMessage());
                 e.printStackTrace();
+                // Decide if this is fatal for initialization
             }
         } else {
-            System.out.println("Connection or statement is not initialized. Cannot clear MySQL data.");
-        }
-    }
-
-    public static void createZooKeeperNode(ZooKeeperManager zooKeeperManager) {
-        try {
-            System.out.println("Calling RegionServer.createZooKeeperNode");
-
-            serverPath = "/lss/region_server/" + ip; // 修改路径以包含IP
-            serverValue = ip + "," + port + "," + mysqlUser + "," + mysqlPwd + ",3306,0";
-
-            // 检查节点是否存在
-            if (zooKeeperManager.nodeExists(serverPath)) {
-                System.out.println("ZooKeeper node already exists at path: " + serverPath + ". Continuing to use it.");
-
-                // 获取现有节点的数据并更新tables列表
-                String existingValue = zooKeeperManager.getData(serverPath);
-                if (existingValue != null && !existingValue.isEmpty()) {
-                    // 解析现有节点数据并更新tables
-                    // 假设数据格式为 "ip,port,mysqlUser,mysqlPwd,port2master,port2regionserver"
-                    // 需要根据实际数据格式调整解析逻辑
-                    // 这里假设tables信息存储在其他路径，如 /lss/region_server/{ip}/table/
-                    updateTablesFromZooKeeper(zooKeeperManager, ip);
-                } else {
-                    System.out.println("Warning: Existing ZooKeeper node has no data.");
-                }
-            } else {
-                // 节点不存在，创建新节点
-                zooKeeperManager.addRegionServer(ip, port, tables, mysqlPwd, mysqlUser, "2182", "3306");
-                System.out.println("ZooKeeper node created successfully at path: " + serverPath);
-            }
-        } catch (KeeperException.NodeExistsException e) {
-            System.out.println("ZooKeeper node already exists at path: " + serverPath + ". Continuing to use it.");
-
-            // 获取现有节点的数据并更新tables列表
-            try {
-                String existingValue = zooKeeperManager.getData(serverPath);
-                if (existingValue != null && !existingValue.isEmpty()) {
-                    // 解析现有节点数据并更新tables
-                    updateTablesFromZooKeeper(zooKeeperManager, ip);
-                } else {
-                    System.out.println("Warning: Existing ZooKeeper node has no data.");
-                }
-            } catch (Exception ex) {
-                System.out.println("Error retrieving data from existing ZooKeeper node: " + ex.getMessage());
-                ex.printStackTrace();
-            }
-        } catch (Exception e) {
-            System.out.println("Error creating ZooKeeper node: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("[RegionServer] Statement is not initialized. Cannot clear MySQL data.");
         }
     }
 
     /**
-     * 根据现有的ZooKeeper节点数据更新tables列表
-     * 需要根据实际的ZooKeeper数据结构进行调整
+     * Creates or updates the ZooKeeper node representing this RegionServer.
+     * Stores essential connection information (IP, client listening port, MySQL details).
+     *
+     * @param zkManager The ZooKeeperManager instance.
      */
-    private static void updateTablesFromZooKeeper(ZooKeeperManager zooKeeperManager, String ip) throws Exception {
-        // 假设tables存储在 /lss/region_server/{ip}/table/{tableName}/
-        String tablesPath = "/lss/region_server/" + ip + "/table";
-        List<String> tableNames = zooKeeperManager.getChildren(tablesPath);
-
-        for (String tableName : tableNames) {
-            // 这里可以根据需要进一步解析每个表的信息
-            // 例如，读取 /lss/region_server/{ip}/table/{tableName}/payload 获取表的详细信息
-            tables.add(new TableInform(tableName, 3));
-            System.out.println("Added table from ZooKeeper: " + tableName);
-        }
-    }
-
-    public static void createSocketAndThreadPool(){
+    public static void createZooKeeperNode(ZooKeeperManager zkManager) {
         try {
-            ServerSocketFactory serverSocketFactory  = ServerSocketFactory.getDefault();
-            serverSocket = serverSocketFactory.createServerSocket(Integer.valueOf(port));
-            System.out.println("Server socket created on port: " + port);
-        } catch (IOException e) {
-            System.out.println("Error creating server socket: " + e.getMessage());
+            System.out.println("[RegionServer] Registering with ZooKeeper using ZooKeeperManager.addRegionServer...");
+
+            // 确保 RegionServer.mysqlPort 包含正确的 MySQL 端口号
+            boolean success = zkManager.addRegionServer(
+                    RegionServer.ip,                  // IP of this RegionServer
+                    RegionServer.clientListenPort,    // Port this RS listens on for clients (e.g., 4001)
+                    new ArrayList<>(),                // Initial tables (empty)
+                    RegionServer.mysqlPwd,            // MySQL password
+                    RegionServer.mysqlUser,           // MySQL username
+                    RegionServer.masterCommPort,      // Port Master listens on for RS connections (e.g., 5001)
+                    RegionServer.mysqlPort            // MySQL port for this RegionServer's DB (e.g., 3306)
+            );
+
+            if (success) {
+                System.out.println("[RegionServer] ZooKeeper registration/update successful via ZooKeeperManager for IP: " + RegionServer.ip);
+                RegionServer.serverPath = "/lss/region_server/" + RegionServer.ip; // For reference
+            } else {
+                System.err.println("[RegionServer] FATAL: ZooKeeperManager.addRegionServer returned false for IP: " + RegionServer.ip);
+                throw new RuntimeException("ZooKeeper registration failed (addRegionServer returned false)");
+            }
+
+        } catch (Exception e) { // Catch more general exceptions from addRegionServer
+            System.err.println("[RegionServer] FATAL: Error during ZooKeeper registration: " + e.getMessage());
             e.printStackTrace();
+            throw new RuntimeException("ZooKeeper registration failed", e);
         }
-
-        threadPoolExecutor = new ThreadPoolExecutor(60,
-                100,
-                20,
-                TimeUnit.SECONDS,
-                new ArrayBlockingQueue<Runnable>(20),
-                Executors.defaultThreadFactory(),
-                new ThreadPoolExecutor.AbortPolicy()
-        );
     }
 
-    public static String getIPAddress(){
-        String res = null;
+
+    /**
+     * Creates the ServerSocket for listening to direct client connections and
+     * initializes the thread pool for handling them.
+     */
+    public static void createSocketAndThreadPool() {
         try {
-            InetAddress addr = InetAddress.getLocalHost();
-            System.out.println("Local HostAddress: "+addr.getHostAddress());
-            res = addr.getHostAddress();
-            String hostname = addr.getHostName();
-            System.out.println("Local host name: "+hostname);
-        } catch(UnknownHostException e) {
-            System.out.println("Error getting IP address: " + e.getMessage());
+            ServerSocketFactory serverSocketFactory = ServerSocketFactory.getDefault();
+            // Listen on the designated client port
+            serverSocket = serverSocketFactory.createServerSocket(Integer.parseInt(clientListenPort));
+            System.out.println("[RegionServer] Server socket created, listening on port: " + clientListenPort);
+        } catch (IOException e) {
+            System.err.println("[RegionServer] FATAL: Error creating server socket on port " + clientListenPort + ": " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Socket creation failed", e);
         }
-        return res;
+
+        // Fixed thread pool for handling client requests
+        threadPoolExecutor = new ThreadPoolExecutor(
+                10, // corePoolSize
+                50, // maximumPoolSize
+                60L, // keepAliveTime
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>(100), // workQueue (use LinkedBlockingQueue for unbounded)
+                Executors.defaultThreadFactory(),
+                new ThreadPoolExecutor.CallerRunsPolicy() // policy for rejected tasks (can adjust)
+        );
+        System.out.println("[RegionServer] Thread pool created.");
     }
 
-    public static int getAvailableTcpPort() {
-        for (int i = 1000; i <= 65535; i++) {
+    /**
+     * Starts the main loop to accept incoming client connections on the clientListenPort.
+     * Each connection is handled by a ServerThread via the thread pool.
+     * This should run in its own thread.
+     */
+    public static void startListening() {
+        if (serverSocket == null || threadPoolExecutor == null) {
+            System.err.println("[RegionServer] Cannot start listening, socket or thread pool not initialized.");
+            return;
+        }
+        System.out.println("[RegionServer] Starting listener loop for client connections on port " + clientListenPort);
+        while (!quitSignal && !serverSocket.isClosed()) {
             try {
-                new ServerSocket(i).close();
-                return i;
+                Socket clientConnSocket = serverSocket.accept();
+                System.out.println("[RegionServer] Accepted connection from: " + clientConnSocket.getRemoteSocketAddress());
+                // Pass the local statement and tables list (if needed by ServerThread logic)
+                ServerThread clientHandler = new ServerThread(clientConnSocket, statement, (ArrayList<TableInform>) tables);
+                threadPoolExecutor.submit(clientHandler);
             } catch (IOException e) {
-                continue;
+                if (quitSignal || serverSocket.isClosed()) {
+                    System.out.println("[RegionServer] Server socket closed, stopping listener loop.");
+                    break;
+                }
+                System.err.println("[RegionServer] Error accepting client connection: " + e.getMessage());
+                // Avoid busy-waiting on error
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
-        return 0;
+        System.out.println("[RegionServer] Listener loop finished.");
+        shutdown(); // Clean up resources when loop ends
     }
+
+
+    /**
+     * Utility method to get the primary non-loopback IP address.
+     *
+     * @return String representation of the IP address, or "127.0.0.1" as fallback.
+     */
+    public static String getIPAddress() {
+        try {
+            // Prefer non-loopback IPv4 address
+            NetworkInterface networkInterface = NetworkInterface.networkInterfaces()
+                    .filter(ni -> {
+                        try {
+                            return ni.isUp() && !ni.isLoopback() && !ni.isVirtual();
+                        } catch (SocketException e) {
+                            return false;
+                        }
+                    })
+                    .findFirst()
+                    .orElse(null);
+
+            if (networkInterface != null) {
+                InetAddress inetAddress = networkInterface.getInterfaceAddresses().stream()
+                        .map(InterfaceAddress::getAddress)
+                        .filter(addr -> addr instanceof java.net.Inet4Address)
+                        .findFirst()
+                        .orElse(InetAddress.getLocalHost()); // Fallback if no IPv4 found on preferred interface
+                return inetAddress.getHostAddress();
+            } else {
+                // Fallback if no suitable interface found
+                return InetAddress.getLocalHost().getHostAddress();
+            }
+        } catch (Exception e) {
+            System.err.println("[RegionServer] Error getting IP address: " + e.getMessage() + ". Falling back to 127.0.0.1");
+            return "127.0.0.1"; // Fallback IP
+        }
+    }
+
+    /**
+     * Shuts down the RegionServer resources gracefully.
+     */
+    public static void shutdown() {
+        System.out.println("[RegionServer] Shutting down...");
+        quitSignal = true; // Signal listening loop to stop
+
+        // Shutdown thread pool
+        if (threadPoolExecutor != null) {
+            threadPoolExecutor.shutdown(); // Disable new tasks from being submitted
+            try {
+                // Wait a while for existing tasks to terminate
+                if (!threadPoolExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
+                    threadPoolExecutor.shutdownNow(); // Cancel currently executing tasks
+                    // Wait a while for tasks to respond to being cancelled
+                    if (!threadPoolExecutor.awaitTermination(60, TimeUnit.SECONDS))
+                        System.err.println("[RegionServer] Pool did not terminate");
+                }
+            } catch (InterruptedException ie) {
+                // (Re-)Cancel if current thread also interrupted
+                threadPoolExecutor.shutdownNow();
+                // Preserve interrupt status
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // Close server socket
+        if (serverSocket != null && !serverSocket.isClosed()) {
+            try {
+                serverSocket.close();
+                System.out.println("[RegionServer] Server socket closed.");
+            } catch (IOException e) {
+                System.err.println("[RegionServer] Error closing server socket: " + e.getMessage());
+            }
+        }
+
+        // Close database connection
+        try {
+            if (statement != null && !statement.isClosed()) {
+                statement.close();
+            }
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+                System.out.println("[RegionServer] Database connection closed.");
+            }
+        } catch (SQLException e) {
+            System.err.println("[RegionServer] Error closing database resources: " + e.getMessage());
+        }
+
+        // Close ZooKeeper connection
+        if (zooKeeperManager != null) {
+            zooKeeperManager.close();
+            System.out.println("[RegionServer] ZooKeeper connection closed.");
+        }
+        System.out.println("[RegionServer] Shutdown complete.");
+    }
+
+    // Utility method to get an available TCP port (use with caution, race conditions possible)
+    // It's generally better to use a fixed, configured port.
+    /*
+    public static int getAvailableTcpPort() {
+        for (int i = 4000; i <= 5000; i++) { // Scan a smaller range
+            try (ServerSocket ss = new ServerSocket(i)) {
+                ss.setReuseAddress(true); // Allow faster reuse
+                return i;
+            } catch (IOException e) {
+                // Port likely in use
+            }
+        }
+        System.err.println("[RegionServer] WARN: No available port found in range 4000-5000. Falling back to 0 (OS default).");
+        return 0; // Let the OS pick a port if none found
+    }
+    */
 }

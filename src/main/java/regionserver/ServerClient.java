@@ -1,212 +1,207 @@
 package regionserver;
 
-import zookeeper.TableInform;
-import zookeeper.ZooKeeperManager;
-import zookeeper.ZooKeeperUtils;
-
 import java.sql.*;
 import java.util.Objects;
 
-import static regionserver.ServerMaster.addTable;
-import static regionserver.ServerMaster.deleteTable;
+// Removed ZooKeeper imports
 
+/**
+ * Provides methods to interact with the local RegionServer's database.
+ * Executes SQL commands received from the Master (via regionserver.Client)
+ * or directly from User Clients (via ServerThread for SELECT).
+ * Does NOT interact with ZooKeeper.
+ */
 public class ServerClient {
-    private static ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
+
+    // Removed ZooKeeperManager instance
+
     /**
-     * 创建表
-     * @param tableName 要创建的表名
-     * @param sqlCmd 完整的CREATE TABLE SQL语句
-     * @return 是否创建成功
+     * Creates a table in the local database.
+     *
+     * @param tableName Ignored in this implementation, SQL command contains the name.
+     * @param sqlCmd    The full CREATE TABLE SQL statement.
+     * @return true if execution succeeds, false otherwise.
+     * @deprecated Use createTable(String sqlCmd) instead.
      */
-    //TODO:region server不和ZooKeeper做过多通信，ZooKeeper监控节点在就行，数据库连接没挂就好了
-    // 其他的不管我那边操作了也测试通过了，增删改表region server都不管告知，这一部分有些删了就好
-    // 只要：①数据库级别连接ZooKeeper；②数据库数据正常
+    @Deprecated
     public static boolean createTable(String tableName, String sqlCmd) {
-        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
-
-        try {
-            // 创建本地表
-            executeUpdate(sqlCmd);
-
-            // 更新ZooKeeper节点
-            String serverPath = RegionServer.serverPath;
-            String currentValue = zooKeeperManager.getData(serverPath);
-            if (currentValue != null && !currentValue.isEmpty()) {
-                String newValue = addTable(currentValue, tableName);
-                zooKeeperManager.setData(serverPath, newValue);
-                return true;
-            }
-        } catch (Exception e) {
-            System.out.println("创建表时出错: " + e.getMessage());
-            e.printStackTrace();
-        }
-        return false;
+        System.out.println("[ServerClient] Executing CREATE (deprecated): " + sqlCmd);
+        return executeCmd(sqlCmd); // Just execute the command
     }
 
     /**
-     * 创建表（从SQL命令中解析表名）
-     * @param sqlCmd 完整的CREATE TABLE SQL语句
-     * @return 是否创建成功
+     * Creates a table in the local database by executing the provided SQL.
+     *
+     * @param sqlCmd The full CREATE TABLE SQL statement.
+     * @return true if execution succeeds, false otherwise.
      */
-    public static boolean createTable(String sqlCmd){
-        try {
-            // 从SQL命令中解析表名
-            String tableName = extractTableName(sqlCmd);
-            if (tableName == null) {
-                System.out.println("无法从SQL命令中解析表名");
-                return false;
-            }
-
-            // 创建本地表
-            executeUpdate(sqlCmd);
-
-            // 更新ZooKeeper节点
-            String serverValue = addTable(Objects.requireNonNull(zooKeeperManager.getData(RegionServer.serverPath)), tableName);
-            System.out.println(serverValue);
-            zooKeeperManager.setData(RegionServer.serverPath, serverValue);
-            return true;
-        } catch (Exception e) {
-            System.out.println(e);
-        }
-        return false;
+    public static boolean createTable(String sqlCmd) {
+        System.out.println("[ServerClient] Executing CREATE: " + sqlCmd);
+        return executeCmd(sqlCmd); // Just execute the command
     }
 
     /**
-     * 删除表
-     * @param tableName 要删除的表名
-     * @return 是否删除成功
+     * Drops a table from the local database.
+     *
+     * @param tableName The name of the table to drop.
+     * @return true if execution succeeds, false otherwise.
      */
     public static boolean dropTable(String tableName) {
-        ZooKeeperManager zooKeeperManager = new ZooKeeperManager();
-
-        try {
-            // 删除本地表
-            String sqlCmd = "DROP TABLE IF EXISTS " + tableName;
-            executeUpdate(sqlCmd);
-
-            // 更新ZooKeeper节点
-            String serverPath = RegionServer.serverPath;
-            String currentValue = zooKeeperManager.getData(serverPath);
-            if (currentValue != null && !currentValue.isEmpty()) {
-                String newValue = deleteTable(currentValue, tableName);
-                zooKeeperManager.setData(serverPath, newValue);
-                return true;
-            }
-        } catch (Exception e) {
-            System.out.println("删除表时出错: " + e.getMessage());
-            e.printStackTrace();
-        }
-        return false;
+        String sqlCmd = "DROP TABLE IF EXISTS `" + tableName + "`"; // Use backticks for safety
+        System.out.println("[ServerClient] Executing DROP: " + sqlCmd);
+        return executeCmd(sqlCmd);
     }
 
     /**
-     * 查询表数据
-     * @param sqlCmd 查询SQL语句
-     * @return 查询结果字符串
+     * Executes a SELECT query on the local database and returns the result as a formatted string.
+     * Each row is a line, columns separated by tabs. Includes header row.
+     *
+     * @param sqlCmd The SELECT SQL statement.
+     * @return A string containing the query results, or null on error.
+     * Returns empty string "" if query runs successfully but yields no rows.
      */
-    //TODO:这是唯一一个client会问你的
-    // public static String selectTable(String ip, String sqlCmd){
-    public static String selectTable(String sqlCmd){
+    public static String selectTable(String sqlCmd) {
+        System.out.println("[ServerClient] Executing SELECT: " + sqlCmd);
         StringBuilder res = new StringBuilder();
+        ResultSet rs = null;
         try {
-            ResultSet r =  RegionServer.statement.executeQuery(sqlCmd);//TODO:要知道ip啊，不然不知道问哪个子数据库
-            ResultSetMetaData rsmd = r.getMetaData();
+            if (RegionServer.statement == null || RegionServer.statement.isClosed()) {
+                throw new SQLException("Database statement is not available.");
+            }
+
+            // Ensure it's actually a select command
+            if (!sqlCmd.trim().toLowerCase().startsWith("select")) {
+                System.err.println("[ServerClient] Non-SELECT command passed to selectTable: " + sqlCmd);
+                return null; // Or throw exception
+            }
+
+            rs = RegionServer.statement.executeQuery(sqlCmd);
+            ResultSetMetaData rsmd = rs.getMetaData();
             int columnCount = rsmd.getColumnCount();
-            while(r.next()){
+
+            // Add header row (Column names)
+            for (int i = 1; i <= columnCount; i++) {
+                res.append(rsmd.getColumnName(i));
+                if (i < columnCount) res.append("\t");
+            }
+            res.append("\n");
+
+            // Add data rows
+            while (rs.next()) {
                 for (int i = 1; i <= columnCount; i++) {
-                    if (i > 1) res.append(" ");
-                    res.append(r.getString(i));
+                    String value = rs.getString(i);
+                    res.append(value == null ? "NULL" : value); // Handle NULLs
+                    if (i < columnCount) res.append("\t");
                 }
                 res.append("\n");
             }
-        } catch (Exception e) {
-            System.out.println("查询时出错: " + e.getMessage());
-            e.printStackTrace();
-        }
-        return res.toString();
-    }
+            return res.toString();
 
-    /**
-     * 执行SQL命令
-     * @param cmd SQL命令
-     * @return 是否执行成功
-     */
-    //TODO:这是唯一一个master会问你的，有点混了，应该不是在ServerClient里面
-    // ip必须要有，拿着ip取正确的数据库线程，然后执行就行，返回一个ture/false,执行就好了
-    // 不用管具体什么操作，也不再组合什么语句了，直接返回执行结果，返回值为ResType，可能需要你判断一下操作符，就是第一个小字符串，也简单
-    // 想要public static ResType executeCmd(String ip, String cmd)
-    public static boolean executeCmd(String cmd){
-        try {
-            if (cmd.trim().toLowerCase().startsWith("select")) {
-                // 如果是查询语句，使用executeQuery
-                ResultSet r = RegionServer.statement.executeQuery(cmd);
-                ResultSetMetaData rsmd = r.getMetaData();
-                int columnCount = rsmd.getColumnCount();
-
-                // 打印列名
-                for (int i = 1; i <= columnCount; i++) {
-                    System.out.print(rsmd.getColumnName(i));
-                    if (i < columnCount) System.out.print(" ");
-                }
-                System.out.println();
-
-                // 打印数据
-                while(r.next()){
-                    for (int i = 1; i <= columnCount; i++) {
-                        System.out.print(r.getString(i));
-                        if (i < columnCount) System.out.print(" ");
-                    }
-                    System.out.println();
-                }
-            } else {
-                // 如果是更新语句，使用executeUpdate
-                executeUpdate(cmd);
+        } catch (SQLException e) {
+            System.err.println("[ServerClient] SQLException during SELECT: " + e.getMessage() + " SQL: " + sqlCmd);
+            // e.printStackTrace(); // Uncomment for full stack trace
+            return null; // Indicate error
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException e) { /* ignored */ }
             }
-            return true;
-        } catch (Exception e){
-            System.out.println("执行命令时出错: " + e.getMessage());
-            e.printStackTrace();
         }
-        return false;
     }
 
     /**
-     * 执行更新操作（INSERT, UPDATE, DELETE, CREATE, DROP等）
-     * @param sql SQL语句
-     * @throws SQLException 如果SQL执行出错
+     * Executes a generic SQL command (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, TRUNCATE etc.).
+     * Determines if it's a query (SELECT - though should use selectTable) or update.
+     *
+     * @param cmd The SQL command string.
+     * @return true if the command executes successfully, false otherwise.
      */
+    public static boolean executeCmd(String cmd) {
+        String trimmedCmd = cmd.trim().toLowerCase();
+        System.out.println("[ServerClient] Executing CMD: " + cmd);
+        try {
+            if (RegionServer.statement == null || RegionServer.statement.isClosed()) {
+                throw new SQLException("Database statement is not available.");
+            }
+
+            if (trimmedCmd.startsWith("select")) {
+                System.err.println("[ServerClient] Warning: SELECT statement passed to executeCmd. Use selectTable instead. Executing anyway.");
+                ResultSet rs = RegionServer.statement.executeQuery(cmd);
+                // Consume the result set to avoid potential issues, though we don't return data here.
+                while(rs.next()){}
+                rs.close();
+            } else {
+                // For INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, TRUNCATE
+                RegionServer.statement.executeUpdate(cmd);
+            }
+            return true; // Success
+        } catch (SQLException e) {
+            System.err.println("[ServerClient] SQLException during executeCmd: " + e.getMessage() + " SQL: " + cmd);
+            // e.printStackTrace(); // Uncomment for full stack trace
+            return false; // Failure
+        }
+    }
+
+    /**
+     * Executes an update operation (INSERT, UPDATE, DELETE, CREATE, DROP, etc.).
+     * Kept for potential direct use, but executeCmd is more general.
+     *
+     * @param sql The SQL statement.
+     * @throws SQLException If the SQL execution fails.
+     * @deprecated Use executeCmd(String cmd) instead.
+     */
+    @Deprecated
     public static void executeUpdate(String sql) throws SQLException {
-        if (RegionServer.statement == null) {
-            throw new SQLException("Statement is not initialized. Please ensure RegionServer is properly initialized.");
+        System.out.println("[ServerClient] Executing UPDATE (deprecated): " + sql);
+        if (RegionServer.statement == null || RegionServer.statement.isClosed()) {
+            throw new SQLException("Statement is not initialized.");
         }
         RegionServer.statement.executeUpdate(sql);
     }
 
     /**
-     * 从SQL命令中提取表名
-     * @param sql SQL命令
-     * @return 表名，如果无法解析则返回null
+     * Utility method to extract table name from common SQL commands (basic parsing).
+     * Useful if a specific method needs the table name separately from the full SQL.
+     *
+     * @param sql The SQL command string.
+     * @return The extracted table name (without quotes/backticks), or null if parsing fails.
      */
     static String extractTableName(String sql) {
+        String sqlLower = sql.trim().toLowerCase();
+        String[] parts = sql.trim().split("\\s+"); // Split by whitespace
+
         try {
-            // 简单解析CREATE TABLE语句
-            if (sql.trim().toLowerCase().startsWith("create table")) {
-                String[] parts = sql.split("\\s+");
-                for (int i = 0; i < parts.length; i++) {
-                    if ("table".equals(parts[i]) && i + 1 < parts.length) {
-                        String tableName = parts[i + 1];
-                        // 去掉括号
-                        int parenIndex = tableName.indexOf('(');
-                        if (parenIndex > 0) {
-                            tableName = tableName.substring(0, parenIndex);
-                        }
-                        return tableName;
-                    }
-                }
+            if (sqlLower.startsWith("create table")) {
+                if (parts.length > 2) return cleanName(parts[2]);
+            } else if (sqlLower.startsWith("drop table")) {
+                if (parts.length > 2) return cleanName(parts[2]);
+            } else if (sqlLower.startsWith("alter table")) {
+                if (parts.length > 2) return cleanName(parts[2]);
+            } else if (sqlLower.startsWith("insert into")) {
+                if (parts.length > 2) return cleanName(parts[2]);
+            } else if (sqlLower.startsWith("update")) {
+                if (parts.length > 1) return cleanName(parts[1]);
+            } else if (sqlLower.startsWith("delete from")) {
+                if (parts.length > 2) return cleanName(parts[2]);
+            } else if (sqlLower.startsWith("truncate table")) {
+                if (parts.length > 2) return cleanName(parts[2]);
             }
         } catch (Exception e) {
-            System.out.println("解析表名时出错: " + e.getMessage());
+            System.err.println("[ServerClient] Error parsing table name from SQL: " + sql + " - " + e.getMessage());
+            return null;
         }
-        return null;
+        // Add more cases if needed
+        return null; // Indicate parsing failure
+    }
+
+    /** Helper to remove potential quotes or backticks and parenthesis from table names */
+    private static String cleanName(String name) {
+        name = name.replace("`", "").replace("\"", "").replace("'", "");
+        int parenIndex = name.indexOf('(');
+        if (parenIndex > 0) {
+            name = name.substring(0, parenIndex);
+        }
+        return name.trim();
     }
 }
