@@ -475,26 +475,23 @@ public class RegionManager{
     private static Map<String, Integer> getRegionsWithLoad(List<String> tableNames){
         Map<String, Integer> regionsWithLoad = new LinkedHashMap<>();
         for(String tableName : tableNames){
-            String regionName = zooKeeperManager.getRegionServer(tableName);
-            if(regionName != null){
-                Integer load = regionsInfo.get(regionName).get(tableName);
-                if(regionsWithLoad.containsKey(regionName)) {
-                    load += regionsWithLoad.get(regionName);
-                }
-                regionsWithLoad.put(regionName, load);
-            }
+            addLoad(regionsWithLoad, tableName);
 
             String slaveTableName = tableName + "_slave";
-            String slaveRegionName = zooKeeperManager.getRegionServer(slaveTableName);
-            if(slaveRegionName != null && regionName == null) {
-                Integer load = regionsInfo.get(slaveRegionName).get(slaveTableName);
-                if(regionsWithLoad.containsKey(slaveRegionName)) {
-                    load += regionsWithLoad.get(slaveRegionName);
-                }
-                regionsWithLoad.put(slaveRegionName, load);
-            }
+            addLoad(regionsWithLoad, slaveTableName);
         }
         return regionsWithLoad;
+    }
+
+    private static void addLoad(Map<String, Integer> regionsWithLoad, String tableName) {
+        String regionName = zooKeeperManager.getRegionServer(tableName);
+        if(regionName != null){
+            Integer load = regionsInfo.get(regionName).get(tableName);
+            if(regionsWithLoad.containsKey(regionName)) {
+                load += regionsWithLoad.get(regionName);
+            }
+            regionsWithLoad.put(regionName, load);
+        }
     }
 
     private static String getLargestLoadRegion(Map<String, Integer> regionsWithLoad){
@@ -519,12 +516,19 @@ public class RegionManager{
                 }else{
                     String delRegion = zooKeeperManager.getRegionServer(tableName);
                     Integer load = regionsInfo.get(delRegion).get(tableName);
-                    regionsInfo.get(delRegion).remove(tableName);
-                    regionsInfo.get(regionName).put(tableName, load);
+                    //处理被移除表的region
+                    Map<String, Integer> delRegionInfo = regionsInfo.get(delRegion);
+                    delRegionInfo.remove(tableName);
+                    regionsInfo.put(delRegion, delRegionInfo);
+                    zooKeeperManager.deleteTable(tableName);
+                    //处理移入表的region
+                    tables.put(tableName, load);
+                    zooKeeperManager.addTable(regionName, new TableInform(tableName,load));
                     //TODO:迁移表
                 }
             }
         }
+        regionsInfo.put(regionName, tables);
         return sql;
     }
 

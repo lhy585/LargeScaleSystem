@@ -1,13 +1,11 @@
 package client;
 
-import com.mysql.cj.jdbc.SuspendableXAConnection;
 import master.SelectInfo;
 
 import java.io.*;
 import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Scanner;
 
 public class Client {
     public static String ip="127.0.0.1";
@@ -21,8 +19,8 @@ public class Client {
         public static String ip;
         public static int port;
         public communite(String ip, int port){
-            this.ip=ip;
-            this.port=port;
+            communite.ip =ip;
+            communite.port =port;
         }
         @Override
         public void run() {
@@ -70,6 +68,7 @@ public class Client {
 
                             // 接收服务器的响应
                             String response=in.readLine();
+                            System.out.println("[Debug] "+response);
                             SelectInfo info = new SelectInfo(response);
                             if(info.getIsValid()){
                                 Socket socket1 = new Socket(info.getIp(),1001);
@@ -78,7 +77,7 @@ public class Client {
                                 out1.println(info.getSql());
                                 System.out.println("debug Message sent to server: " + sql);
                                 String response3= in1.readLine();
-                                System.out.println("debug get response"+response3);
+                                System.out.println("debug get response: "+response3);
                             }
                             else{
                                 System.out.println("some table name is not valid");
@@ -96,6 +95,7 @@ public class Client {
 
                         // 接收服务器的响应
                         String response=in.readLine();
+                        System.out.println("[Debug] "+response);
                         SelectInfo info = new SelectInfo(response);
                         if(info.getIsValid()){
                             Socket socket1 = new Socket(info.getIp(),1001);
@@ -104,7 +104,7 @@ public class Client {
                             out1.println(info.getSql());
                             System.out.println("debug Message sent to server: " + sql);
                             String response3= in1.readLine();
-                            System.out.println("debug get response"+response3);
+                            System.out.println("debug get response: "+response3);
                         }
                         else{
                             System.out.println("some table name is not valid");

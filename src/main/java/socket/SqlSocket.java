@@ -8,9 +8,7 @@ import net.sf.jsqlparser.statement.create.table.CreateTable;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.drop.Drop;
 import net.sf.jsqlparser.statement.insert.Insert;
-import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
-import net.sf.jsqlparser.statement.select.SelectItem;
 import net.sf.jsqlparser.statement.truncate.Truncate;
 import net.sf.jsqlparser.statement.update.Update;
 import net.sf.jsqlparser.util.TablesNamesFinder;
@@ -64,82 +62,82 @@ public class SqlSocket {
 
             if (statement instanceof Select select) {
                 type = SqlType.SELECT;
-                PlainSelect plainSelect = (PlainSelect) select.getSelectBody();
-
-                output.println("✅ 发送的是 SELECT 语句");
-                output.println("📌 查询字段：");
-                for (SelectItem item : plainSelect.getSelectItems()) {
-                    output.println("  - " + item);
-                }
+//                PlainSelect plainSelect = (PlainSelect) select.getSelectBody();
+//
+//                output.println("✅ 发送的是 SELECT 语句");
+//                output.println("📌 查询字段：");
+//                for (SelectItem item : plainSelect.getSelectItems()) {
+//                    output.println("  - " + item);
+//                }
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 查询表名：" + tableNames);
-                if (plainSelect.getWhere() != null) {
-                    output.println("📌 查询条件：" + plainSelect.getWhere());
-                }
+//                output.println("📌 查询表名：" + tableNames);
+//                if (plainSelect.getWhere() != null) {
+//                    output.println("📌 查询条件：" + plainSelect.getWhere());
+//                }
             } else if (statement instanceof Insert insert) {
                 type = SqlType.INSERT;
 
-                output.println("✅ 发送的是 INSERT 语句");
+//                output.println("✅ 发送的是 INSERT 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 插入表名：" + tableNames);
-                output.println("📌 字段列表：" + insert.getColumns());
-                output.println("📌 插入值：" + insert.getItemsList());
+//                output.println("📌 插入表名：" + tableNames);
+//                output.println("📌 字段列表：" + insert.getColumns());
+//                output.println("📌 插入值：" + insert.getItemsList());
             } else if (statement instanceof CreateTable create) {
                 type = SqlType.CREATE;
 
-                output.println("✅ 发送的是 CREATE TABLE 语句");
+//                output.println("✅ 发送的是 CREATE TABLE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 表名：" + tableNames);
-                output.println("📌 字段定义：");
-                create.getColumnDefinitions().forEach(col -> output.println("  - " + col));
+//                output.println("📌 表名：" + tableNames);
+//                output.println("📌 字段定义：");
+//                create.getColumnDefinitions().forEach(col -> output.println("  - " + col));
             } else if (statement instanceof Delete delete) {
                 type = SqlType.DELETE;
 
-                output.println("✅ 发送的是 DELETE 语句");
+//                output.println("✅ 发送的是 DELETE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 删除表名：" + tableNames);
-                if (delete.getWhere() != null) {
-                    output.println("📌 删除条件：" + delete.getWhere());
-                }
+//                output.println("📌 删除表名：" + tableNames);
+//                if (delete.getWhere() != null) {
+//                    output.println("📌 删除条件：" + delete.getWhere());
+//                }
             } else if (statement instanceof Update update) {
                 type = SqlType.UPDATE;
 
-                output.println("✅ 发送的是 UPDATE 语句");
+//                output.println("✅ 发送的是 UPDATE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 更新表名：" + tableNames);
-                output.println("📌 更新字段：");
-                for (int i = 0; i < update.getColumns().size(); i++) {
-                    output.println("  - " + update.getColumns().get(i) + " = " + update.getExpressions().get(i));
-                }
-                if (update.getWhere() != null) {
-                    output.println("📌 更新条件：" + update.getWhere());
-                }
+//                output.println("📌 更新表名：" + tableNames);
+//                output.println("📌 更新字段：");
+//                for (int i = 0; i < update.getColumns().size(); i++) {
+//                    output.println("  - " + update.getColumns().get(i) + " = " + update.getExpressions().get(i));
+//                }
+//                if (update.getWhere() != null) {
+//                    output.println("📌 更新条件：" + update.getWhere());
+//                }
             } else if (statement instanceof Alter alter) {
                 type = SqlType.ALTER;
 
-                output.println("✅ 发送的是 ALTER 语句");
+//                output.println("✅ 发送的是 ALTER 语句");
                 String tableName = alter.getTable().getName();
                 tableNames = Collections.singletonList(tableName);
-                output.println("📌 修改的表名：" + tableNames);
-                output.println("📌 修改操作列表：");
-                alter.getAlterExpressions().forEach(expr -> output.println("  - " + expr));
+//                output.println("📌 修改的表名：" + tableNames);
+//                output.println("📌 修改操作列表：");
+//                alter.getAlterExpressions().forEach(expr -> output.println("  - " + expr));
             } else if (statement instanceof Truncate truncate) {
                 type = SqlType.TRUNCATE;
 
-                output.println("✅ 发送的是 TRUNCATE 语句");
+//                output.println("✅ 发送的是 TRUNCATE 语句");
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 清空的表名：" + tableNames);
+//                output.println("📌 清空的表名：" + tableNames);
             }else if (statement instanceof Drop drop) {
                 type = SqlType.DROP;
 
-                output.println("✅ 发送的是 DROP 语句");
-                output.println("📌 删除类型：" + drop.getType());
+//                output.println("✅ 发送的是 DROP 语句");
+//                output.println("📌 删除类型：" + drop.getType());
                 tableNames = tablesNamesFinder.getTableList(statement);
-                output.println("📌 删除的表名：" + tableNames);
+//                output.println("📌 删除的表名：" + tableNames);
             } else {
                 type = SqlType.UNKNOWN;
                 tableNames = null;
-                output.println("⚠️ 暂不支持解析的语句类型：" + statement.getClass().getSimpleName());
+//                output.println("⚠️ 暂不支持解析的语句类型：" + statement.getClass().getSimpleName());
             }
             parsedSqlResult = new ParsedSqlResult(type, tableNames, statement);
         } catch (Exception e) {
