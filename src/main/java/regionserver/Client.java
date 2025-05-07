@@ -2,20 +2,20 @@ package regionserver;
 
 import java.io.*;
 import java.net.Socket;
-import java.net.InetAddress;
+import java.net.InetAddress; // 未直接使用，可以考虑移除
 import java.nio.charset.StandardCharsets;
 
-import master.ResType; // Assuming ResType is accessible or copied
+import master.ResType; // 假设 ResType 在 master 包中并且是可访问的
 
 /**
- * Main process for a RegionServer.
- * 1. Initializes static RegionServer resources (DB, ZK, listening socket).
- * 2. Starts a thread to listen for direct client connections (e.g., for SELECT).
- * 3. Connects to the Master (port 5001) to register and receive commands (DDL/DML).
+ * RegionServer 的主进程.
+ * 1. 初始化静态的 RegionServer 资源 (数据库连接, ZooKeeper连接, 监听Socket等).
+ * 2. 启动一个线程来监听直接的客户端连接 (例如处理 SELECT).
+ * 3. 连接到 Master (端口 5001) 进行注册并接收命令 (DDL/DML).
  */
 public class Client {
-    private static final String MASTER_HOST = "127.0.0.1"; // Master's host address
-    // Port Master listens for RegionServer connections
+    private static final String MASTER_HOST = "127.0.0.1"; // Master 的主机地址
+    // Master 监听 RegionServer 连接的端口
     private static final int MASTER_REGION_SERVER_PORT = 5001;
 
     private Socket masterSocket;
@@ -23,153 +23,146 @@ public class Client {
     private BufferedReader readerFromMaster;
     private volatile boolean running = true;
 
-    // Removed SERVER_COUNTER and regionServerId, registration uses ZK path (IP)
-
     public static void main(String[] args) {
-        // 1. Initialize RegionServer static resources
+        // 1. 初始化 RegionServer 静态资源
         try {
             RegionServer.initRegionServer();
         } catch (RuntimeException e) {
-            System.err.println("[RegionServer Process] Initialization failed: " + e.getMessage());
-            System.err.println("[RegionServer Process] Exiting.");
-            return; // Stop if initialization fails
+            System.err.println("[RegionServer Process] 初始化失败: " + e.getMessage());
+            System.err.println("[RegionServer Process] 退出.");
+            return; // 初始化失败则停止
         }
 
-        // 2. Start the listener thread for direct client connections (on RegionServer.clientListenPort)
+        // 2. 启动监听线程，处理直接的客户端连接 (在 RegionServer.clientListenPort 上)
         Thread listenerThread = new Thread(RegionServer::startListening);
-        listenerThread.setDaemon(false); // Keep process alive
+        listenerThread.setDaemon(false); // 保持进程存活
         listenerThread.setName("RegionServer-ClientListener-" + RegionServer.clientListenPort);
         listenerThread.start();
 
-        // 3. Connect to Master and handle commands
+        // 3. 连接到 Master 并处理命令
         Client regionServerProcess = new Client();
         try {
-            regionServerProcess.start(); // Connects to master and starts listening for commands
-            // Keep the main thread alive (or handle graceful shutdown)
-            // The listenerThread and the master communication loop keep the process running.
-            System.out.println("[RegionServer Process] Running. Listening for clients on " + RegionServer.clientListenPort +
-                    " and connected to Master on " + MASTER_REGION_SERVER_PORT);
+            regionServerProcess.start(); // 连接到 master 并开始监听命令
+            System.out.println("[RegionServer Process] 运行中. 在端口 " + RegionServer.clientListenPort +
+                    " 监听客户端连接，并已连接到 Master 的端口 " + MASTER_REGION_SERVER_PORT);
 
-            // Add shutdown hook for graceful termination
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                System.out.println("[RegionServer Process] Shutdown hook triggered.");
-                regionServerProcess.stop();
-                RegionServer.shutdown();
+                System.out.println("[RegionServer Process] 关闭钩子被触发.");
+                regionServerProcess.stop(); // 停止与 Master 的连接
+                RegionServer.shutdown();   // 关闭 RegionServer 的静态资源
             }));
 
-            // Keep main thread alive if necessary, or wait for listener/master threads
-            // For example, wait for the listener thread:
-            // listenerThread.join();
-            // Or simply loop:
-            while(regionServerProcess.running) {
-                Thread.sleep(5000); // Keep main thread alive, checking status periodically
+            // 保持主线程存活 (监听线程和 Master 通信循环会保持进程运行)
+            while (regionServerProcess.running) {
+                try {
+                    Thread.sleep(5000); // 定期检查状态
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt(); // 重置中断状态
+                    System.out.println("[RegionServer Process] 主线程被中断.");
+                    regionServerProcess.running = false; // 退出循环
+                }
             }
 
-
-        } catch (IOException | InterruptedException e) {
-            System.err.println("[RegionServer Process] Error during Master communication setup or runtime: " + e.getMessage());
+        } catch (IOException e) { // 从 start() 抛出的 IOException
+            System.err.println("[RegionServer Process] Master 通信设置或运行时错误: " + e.getMessage());
             e.printStackTrace();
         } finally {
-            // Ensure resources are cleaned up if start() fails partially or loop exits unexpectedly
-            regionServerProcess.stop(); // Stop master connection loop
-            // RegionServer.shutdown() should be called by shutdown hook or here if hook isn't used
+            // 确保资源被清理
+            regionServerProcess.stop(); // 确保停止 Master 连接循环
             // RegionServer.shutdown();
-            System.out.println("[RegionServer Process] Exited.");
+            System.out.println("[RegionServer Process] 退出.");
         }
     }
 
     /**
-     * Starts the connection to the Master: connects, registers, and listens for commands.
+     * 启动到 Master 的连接: 连接, 注册, 并监听命令.
      */
     public void start() throws IOException {
         connectToMaster();
         registerWithMaster();
-        listenForMasterCommands(); // Start listening loop (runs in current thread)
+        listenForMasterCommands(); // 开始监听循环 (在当前线程运行)
     }
 
     private void connectToMaster() throws IOException {
-        System.out.println("[RegionServer Process] Connecting to Master at " + MASTER_HOST + ":" + MASTER_REGION_SERVER_PORT + "...");
+        System.out.println("[RegionServer Process] 正在连接到 Master " + MASTER_HOST + ":" + MASTER_REGION_SERVER_PORT + "...");
         masterSocket = new Socket(MASTER_HOST, MASTER_REGION_SERVER_PORT);
-        // Ensure UTF-8 encoding for reliable communication
+        // 确保使用 UTF-8 编码进行可靠通信
         writerToMaster = new BufferedWriter(new OutputStreamWriter(masterSocket.getOutputStream(), StandardCharsets.UTF_8));
         readerFromMaster = new BufferedReader(new InputStreamReader(masterSocket.getInputStream(), StandardCharsets.UTF_8));
-        System.out.println("[RegionServer Process] Connected to Master.");
+        System.out.println("[RegionServer Process] 已连接到 Master.");
     }
 
     /**
-     * Registers this RegionServer with the Master.
-     * Sends necessary identification or information.
+     * 向 Master 注册此 RegionServer.
+     * 发送必要的身份或信息.
      */
     private void registerWithMaster() throws IOException {
-        System.out.println("[RegionServer Process] Registering with Master...");
+        System.out.println("[RegionServer Process] 正在向 Master 注册...");
         // 协议: 第1行 = 命令, 第2行 = ZK 中使用的 IP
         writerToMaster.write("REGISTER_REGION_SERVER");
         writerToMaster.newLine();
         writerToMaster.write(RegionServer.ip); // 发送在 ZK 注册的 IP
         writerToMaster.newLine();
         writerToMaster.flush();
-        System.out.println("[RegionServer Process] Registration messages sent to Master (including ZK IP: " + RegionServer.ip + ").");
+        System.out.println("[RegionServer Process] 注册信息已发送给 Master (包含 ZK IP: " + RegionServer.ip + ").");
     }
 
 
     /**
-     * Listens for commands from the Master and handles them.
-     * This loop runs in the main thread of the Client object.
+     * 监听来自 Master 的命令并处理它们.
+     * 这个循环在此 Client 对象的主线程中运行.
      */
     private void listenForMasterCommands() {
-        System.out.println("[RegionServer Process] Listening for commands from Master...");
+        System.out.println("[RegionServer Process] 正在监听来自 Master 的命令...");
         try {
             String commandFromMaster;
             while (running && (commandFromMaster = readerFromMaster.readLine()) != null) {
-                System.out.println("[RegionServer Process] Received command from Master: \"" + commandFromMaster + "\"");
+                System.out.println("[RegionServer Process] 从 Master 收到命令: \"" + commandFromMaster + "\"");
 
-                // Simple check for Master heartbeat or test command
+                // 简单的心跳或测试命令检查
                 if ("PING".equalsIgnoreCase(commandFromMaster)) {
                     sendResponseToMaster("PONG");
                     continue;
                 }
                 if ("QUIT".equalsIgnoreCase(commandFromMaster)) {
-                    System.out.println("[RegionServer Process] Received QUIT command from Master.");
+                    System.out.println("[RegionServer Process] 从 Master 收到 QUIT 命令.");
                     running = false;
                     break;
                 }
-
-                // Assume command is SQL to be executed directly
-                // Master should format the command appropriately (e.g., "CREATE TABLE ...", "INSERT INTO ...")
+                // 处理从 Master 接收到的 SQL 命令
                 handleSqlCommand(commandFromMaster);
 
             }
         } catch (IOException e) {
-            if (running) { // Only log error if not intentionally stopping
-                System.err.println("[RegionServer Process] IOException while listening for Master commands: " + e.getMessage());
-                // Consider adding retry logic or shutting down based on the error
-                running = false; // Stop running on communication error
+            if (running) { // 只有在非主动停止时才记录错误
+                System.err.println("[RegionServer Process] 监听 Master 命令时发生 IOException: " + e.getMessage());
+                running = false; // 通信错误时停止运行
             }
         } finally {
-            System.out.println("[RegionServer Process] Stopped listening for Master commands.");
-            stop(); // Ensure resources are closed if loop terminates
+            System.out.println("[RegionServer Process] 停止监听 Master 命令.");
+            stop(); // 确保资源被关闭
         }
     }
 
     /**
-     * Handles a generic SQL command received from the Master.
-     * Determines the type (SELECT vs. others) and executes it using ServerClient.
-     * Sends a simple SUCCESS/FAILURE response back to the Master.
+     * 处理从 Master 收到的通用 SQL 命令.
+     * 判断类型 (SELECT vs. 其他) 并使用 ServerClient 执行.
+     * 向 Master 发回简单的 SUCCESS/FAILURE 响应.
      *
-     * @param sqlCommand The SQL command string from the Master.
+     * @param sqlCommand 从 Master 收到的 SQL 命令字符串.
      */
     private void handleSqlCommand(String sqlCommand) {
         String commandType = "UNKNOWN";
         boolean success = false;
-        String resultData = null; // For SELECT results
+        String resultData = null; // 用于 SELECT 结果
 
         try {
             String trimmedCommand = sqlCommand.trim().toLowerCase();
-            // Basic command type detection
+            // 基本的命令类型检测
             if (trimmedCommand.startsWith("select")) {
                 commandType = "SELECT";
-                resultData = ServerClient.selectTable(sqlCommand); // Execute SELECT
-                success = (resultData != null); // Success if we got some result (even empty)
+                resultData = ServerClient.selectTable(sqlCommand); // 执行 SELECT
+                success = (resultData != null); // 只要没抛异常，即使结果为空也算成功
             } else if (trimmedCommand.startsWith("insert")) {
                 commandType = "INSERT";
                 success = ServerClient.executeCmd(sqlCommand);
@@ -181,15 +174,15 @@ public class Client {
                 success = ServerClient.executeCmd(sqlCommand);
             } else if (trimmedCommand.startsWith("create table")) {
                 commandType = "CREATE_TABLE";
-                success = ServerClient.createTable(sqlCommand); // Use the method that just executes
+                success = ServerClient.createTable(sqlCommand); // 使用只执行命令的方法
             } else if (trimmedCommand.startsWith("drop table")) {
                 commandType = "DROP_TABLE";
-                // Extract table name for the dropTable method signature if needed, otherwise use executeCmd
-                String tableName = ServerClient.extractTableName(sqlCommand); // Helper might be needed if dropTable requires name
+                String tableName = ServerClient.extractTableName(sqlCommand);
                 if (tableName != null) {
-                    success = ServerClient.dropTable(tableName); // Assumes dropTable takes only name
+                    success = ServerClient.dropTable(tableName); // 假设 dropTable 只需表名
                 } else {
-                    success = ServerClient.executeCmd(sqlCommand); // Fallback to generic execution
+                    System.err.println("[RegionServer Process] Failed to extract table name for DROP: " + sqlCommand);
+                    success = ServerClient.executeCmd(sqlCommand); // 尝试通用执行
                 }
             } else if (trimmedCommand.startsWith("alter table")) {
                 commandType = "ALTER_TABLE";
@@ -197,35 +190,36 @@ public class Client {
             } else if (trimmedCommand.startsWith("truncate")) {
                 commandType = "TRUNCATE";
                 success = ServerClient.executeCmd(sqlCommand);
-            } else {
-                // Handle other SQL commands or potentially non-SQL instructions
-                System.err.println("[RegionServer Process] Received unrecognized command structure: " + sqlCommand);
+            } else if (trimmedCommand.startsWith("copy_table")) { // 处理自定义的 COPY_TABLE 命令
+                commandType = "COPY_TABLE";
+                success = handleCopyTableCommand(sqlCommand);
+            }
+            else {
+                System.err.println("[RegionServer Process] 收到无法识别的命令结构: " + sqlCommand);
                 commandType = "EXECUTE_UNKNOWN";
-                success = ServerClient.executeCmd(sqlCommand); // Try executing anyway
+                success = ServerClient.executeCmd(sqlCommand); // 尝试执行
             }
 
-            // Send response back to Master
+            // 向 Master 发送响应
             if ("SELECT".equals(commandType)) {
                 if (success) {
-                    // Send SUCCESS marker followed by data lines, ending with a specific marker
                     sendResponseToMaster("SUCCESS SELECT");
                     if (resultData.isEmpty()) {
-                        sendResponseToMaster("END_OF_SELECT_DATA"); // Indicate empty result
+                        sendResponseToMaster("END_OF_DATA");
                     } else {
-                        // Send each line of the result
                         try (BufferedReader resultReader = new BufferedReader(new StringReader(resultData))) {
                             String line;
                             while ((line = resultReader.readLine()) != null) {
                                 sendResponseToMaster(line);
                             }
                         }
-                        sendResponseToMaster("END_OF_SELECT_DATA"); // End marker
+                        sendResponseToMaster("END_OF_DATA");
                     }
                 } else {
                     sendResponseToMaster("FAILURE SELECT");
                 }
             } else {
-                // For non-SELECT commands
+                // 对于非 SELECT 命令
                 if (success) {
                     sendResponseToMaster("SUCCESS " + commandType);
                 } else {
@@ -234,19 +228,71 @@ public class Client {
             }
 
         } catch (Exception e) {
-            System.err.println("[RegionServer Process] Error handling command (" + commandType + "): " + sqlCommand);
-            System.err.println("[RegionServer Process] Exception: " + e.getMessage());
+            System.err.println("[RegionServer Process] 处理命令 (" + commandType + ") 时出错: " + sqlCommand);
+            System.err.println("[RegionServer Process] 异常: " + e.getMessage());
             e.printStackTrace();
-            // Send failure response
             sendResponseToMaster("FAILURE " + commandType + " Exception: " + e.getMessage());
         }
     }
 
+    /**
+     * 处理 Master 发送的自定义 COPY_TABLE 命令.
+     * 格式: COPY_TABLE <source_host> <source_port> <source_user> <source_pwd> <source_table> <target_table>
+     * @param command 命令字符串
+     * @return 是否成功启动复制过程
+     */
+    private boolean handleCopyTableCommand(String command) {
+        String prefix = "COPY_TABLE ";
+        if (!command.startsWith(prefix)) {
+            return false;
+        }
+        String[] parts = command.substring(prefix.length()).split("\\s+");
+        if (parts.length != 6) {
+            System.err.println("[RegionServer Process] Invalid COPY_TABLE command format: " + command);
+            return false;
+        }
+        String sourceHost = parts[0];
+        String sourcePort = parts[1];
+        String sourceUser = parts[2];
+        String sourcePwd = parts[3];
+        String sourceTable = parts[4];
+        String targetTable = parts[5]; // 这是在本 RegionServer 上创建的表名
+
+        System.out.println("[RegionServer Process] Received request to copy table " + sourceTable + " from " + sourceHost + ":" + sourcePort + " to local table " + targetTable);
+        boolean copySuccess = ServerMaster.dumpTable(
+                sourceHost, // sourceRegionName (用于日志)
+                sourceHost, sourcePort, sourceUser, sourcePwd,
+                sourceTable,
+                RegionServer.mysqlUser, // 本地目标数据库用户名
+                RegionServer.mysqlPwd   // 本地目标数据库密码
+        );
+
+        if (copySuccess) {
+            System.out.println("[RegionServer Process] Table copy initiated successfully for " + targetTable);
+            // 在 ServerMaster.dumpTable 成功后，可以选择性地修改表名（如果需要）
+            if (!sourceTable.equals(targetTable)) {
+                System.out.println("[RegionServer Process] Renaming imported table " + sourceTable + " to " + targetTable);
+                String renameSql = "RENAME TABLE `" + sourceTable + "` TO `" + targetTable + "`;";
+                try {
+                    ServerClient.executeCmd(renameSql); // 使用本地执行
+                    System.out.println("[RegionServer Process] Table renamed successfully.");
+                } catch (Exception e) {
+                    System.err.println("[RegionServer Process] Failed to rename table after copy: " + e.getMessage());
+                    // 即使重命名失败，复制也可能部分成功，但返回 false 表示整个操作未完全成功
+                    return false;
+                }
+            }
+        } else {
+            System.err.println("[RegionServer Process] Table copy initiation failed for " + targetTable);
+        }
+        return copySuccess;
+    }
+
 
     /**
-     * Sends a response message back to the Master.
+     * 向 Master 发送响应消息.
      *
-     * @param response The message string to send.
+     * @param response 要发送的消息字符串.
      */
     private void sendResponseToMaster(String response) {
         if (writerToMaster != null) {
@@ -254,41 +300,36 @@ public class Client {
                 writerToMaster.write(response);
                 writerToMaster.newLine();
                 writerToMaster.flush();
-                // System.out.println("[RegionServer Process] Sent to Master: " + response); // Optional: Log sent messages
             } catch (IOException e) {
-                System.err.println("[RegionServer Process] Failed to send response to Master: " + e.getMessage());
-                // Consider implications: Master might timeout or mark this RS as failed
-                running = false; // Stop if we can't communicate back
+                System.err.println("[RegionServer Process] 向 Master 发送响应失败: " + e.getMessage());
+                running = false; // 如果无法通信则停止
             }
         } else {
-            System.err.println("[RegionServer Process] Cannot send response, writer to Master is null.");
+            System.err.println("[RegionServer Process] 无法发送响应，到 Master 的 writer 为 null.");
         }
     }
 
     /**
-     * Stops the client's connection to the Master and sets the running flag to false.
+     * 停止客户端到 Master 的连接并将运行标志设为 false.
      */
     public void stop() {
-        System.out.println("[RegionServer Process] Stopping connection to Master...");
-        running = false; // Signal loops to exit
+        if (!running) return; // 防止重复停止
+        System.out.println("[RegionServer Process] 正在停止到 Master 的连接...");
+        running = false; // 信号循环退出
         try {
-            // Close streams and socket connected to the Master
-            if (writerToMaster != null) {
-                writerToMaster.close();
-            }
-            if (readerFromMaster != null) {
-                readerFromMaster.close();
-            }
-            if (masterSocket != null && !masterSocket.isClosed()) {
-                masterSocket.close();
-            }
-            System.out.println("[RegionServer Process] Connection to Master closed.");
-        } catch (IOException e) {
-            System.err.println("[RegionServer Process] Error while closing connection to Master: " + e.getMessage());
-        } finally {
+            if (writerToMaster != null) writerToMaster.close();
+        } catch (Exception e) { /* 忽略 */ }
+        try {
+            if (readerFromMaster != null) readerFromMaster.close();
+        } catch (IOException e) { /* 忽略 */ }
+        try {
+            if (masterSocket != null && !masterSocket.isClosed()) masterSocket.close();
+        } catch (IOException e) {  }
+        finally{ // 确保引用被清空
             writerToMaster = null;
             readerFromMaster = null;
             masterSocket = null;
+            System.out.println("[RegionServer Process] 到 Master 的连接已关闭.");
         }
     }
 }

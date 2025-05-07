@@ -11,229 +11,206 @@ import java.util.concurrent.*;
 
 import javax.net.ServerSocketFactory;
 
-import org.apache.zookeeper.KeeperException;
+// import org.apache.zookeeper.KeeperException; // 不再直接使用 ZK 异常
 import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
 
 public class RegionServer {
     public static String ip;
-    public static String masterCommPort = "5001"; // Port Master listens for RegionServers
-    public static String clientListenPort = "4001"; // Port this RegionServer listens for direct clients
+    public static String masterCommPort = "5001"; // Master 监听 RegionServer 连接的端口
+    public static String clientListenPort = "4001"; // 此 RegionServer 监听客户端直接连接的端口
     public static String mysqlUser;
     public static String mysqlPwd;
-    public static String mysqlPort = "3306"; // MySQL instance port
+    public static String mysqlPort = "3306"; // 此 RegionServer 对应的 MySQL 实例端口
 
     public static Connection connection = null;
     public static Statement statement = null;
 
     public static ServerSocket serverSocket = null;
     public static ThreadPoolExecutor threadPoolExecutor = null;
-    public static ZooKeeperManager zooKeeperManager = null; // Make ZK manager accessible if needed by ServerThread/Client
+    public static ZooKeeperManager zooKeeperManager = null; // ZK 管理器实例
 
-    public static volatile boolean quitSignal = false; // Renamed for clarity
-    public static List<TableInform> tables; // This might be redundant if Master/ZK manages all metadata
+    public static volatile boolean quitSignal = false; // 退出信号
+    public static List<TableInform> tables; // 当前 RegionServer 负责的表信息 (可能由 Master/ZK 管理更佳)
 
-    public static String serverPath; // ZK path for this server
-    // serverValue is not explicitly needed here if ZK updates are handled by Master/ZKManager
+    public static String serverPath; // 此服务器在 ZK 中的路径
 
     static {
         ip = getIPAddress();
-        mysqlUser = "root"; // Example user
-        mysqlPwd = "040517cc"; // Example password - Use secure methods in production
-        tables = new ArrayList<>(); // Initialize list
+        mysqlUser = "root"; // 示例用户名
+        mysqlPwd = "040517cc"; // 示例密码 (生产环境应使用安全方式配置)
+        tables = new ArrayList<>(); // 初始化列表
     }
 
     /**
-     * Initializes the RegionServer's static resources: ZK connection, DB connection,
-     * listening socket, and thread pool. Registers with ZooKeeper.
+     * 初始化 RegionServer 的静态资源: ZK 连接, 数据库连接, 监听 Socket, 线程池. 并向 ZooKeeper 注册.
      *
-     * @return Initialized ZooKeeperManager instance.
-     * @throws RuntimeException if initialization fails critically.
+     * @return 初始化后的 ZooKeeperManager 实例.
+     * @throws RuntimeException 如果关键初始化步骤失败.
      */
     public static ZooKeeperManager initRegionServer() {
-        zooKeeperManager = new ZooKeeperManager(); // Initialize ZK Manager first
-        System.out.println("[RegionServer] Initializing...");
+        zooKeeperManager = new ZooKeeperManager();
+        System.out.println("[RegionServer] 初始化...");
 
-        // Initialize Database Connection
+        // 初始化数据库连接
         try {
-            System.out.println("[RegionServer] Setting up MySQL connection...");
+            System.out.println("[RegionServer] 正在设置 MySQL 连接...");
             if (connection != null && !connection.isClosed()) {
                 connection.close();
             }
-            connection = JdbcUtils.getConnection(mysqlUser, mysqlPwd); // Assuming getConnection takes port
+            // 使用用户名和密码连接到 localhost (JdbcUtils内部处理)
+            connection = JdbcUtils.getConnection(mysqlUser, mysqlPwd);
             if (connection != null) {
                 statement = connection.createStatement();
-                System.out.println("[RegionServer] MySQL connection established.");
-                clearMysqlData(); // Clear data on initialization
+                System.out.println("[RegionServer] MySQL 连接已建立.");
+                clearMysqlData(); // 初始化时清理数据库
             } else {
-                throw new SQLException("Failed to establish database connection.");
+                throw new SQLException("无法建立数据库连接.");
             }
         } catch (SQLException e) {
-            System.err.println("[RegionServer] FATAL: Failed to initialize database connection: " + e.getMessage());
+            System.err.println("[RegionServer] 致命错误: 初始化数据库连接失败: " + e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException("Database initialization failed", e);
+            throw new RuntimeException("数据库初始化失败", e);
         }
 
-        // Register with ZooKeeper
-        System.out.println("[RegionServer] Registering with ZooKeeper...");
+        // 向 ZooKeeper 注册
+        System.out.println("[RegionServer] 正在向 ZooKeeper 注册...");
         createZooKeeperNode(zooKeeperManager);
 
-        // Create Listening Socket and Thread Pool
-        System.out.println("[RegionServer] Creating listening socket and thread pool...");
+        // 创建监听 Socket 和线程池
+        System.out.println("[RegionServer] 正在创建监听 Socket 和线程池...");
         createSocketAndThreadPool();
 
-        System.out.println("[RegionServer] Initialization complete. Listening on port " + clientListenPort);
+        System.out.println("[RegionServer] 初始化完成. 在端口 " + clientListenPort + " 上监听.");
         return zooKeeperManager;
     }
 
     /**
-     * Clears the specific database ('lss') used by this RegionServer.
-     * Should be used carefully, typically only during initialization or testing.
+     * 清理此 RegionServer 使用的特定数据库 ('lss').
+     * 应谨慎使用, 通常只在初始化或测试期间进行.
      */
     public static void clearMysqlData() {
         if (statement != null) {
             try {
-                System.out.println("[RegionServer] Clearing MySQL database 'lss'...");
-                // Use the database before dropping/creating tables within it
+                System.out.println("[RegionServer] 正在清理 MySQL 数据库 'lss'...");
                 statement.execute("CREATE DATABASE IF NOT EXISTS lss");
                 statement.execute("USE lss");
-                // Example: Drop tables if they exist (more robust than dropping DB)
-                // ResultSet rs = statement.executeQuery("SHOW TABLES");
-                // List<String> tablesToDrop = new ArrayList<>();
-                // while (rs.next()) {
-                //     tablesToDrop.add(rs.getString(1));
-                // }
-                // rs.close();
-                // for (String tableName : tablesToDrop) {
-                //     System.out.println("[RegionServer] Dropping table: " + tableName);
-                //     statement.execute("DROP TABLE IF EXISTS " + tableName);
-                // }
-                // Or, if really needed:
-                // statement.execute("DROP DATABASE IF EXISTS lss");
-                // statement.execute("CREATE DATABASE lss");
-                // statement.execute("USE lss");
-                System.out.println("[RegionServer] MySQL database 'lss' cleared/prepared.");
+                System.out.println("[RegionServer] MySQL 数据库 'lss' 已清理/准备就绪.");
             } catch (SQLException e) {
-                System.err.println("[RegionServer] Error clearing MySQL data: " + e.getMessage());
+                System.err.println("[RegionServer] 清理 MySQL 数据时出错: " + e.getMessage());
                 e.printStackTrace();
-                // Decide if this is fatal for initialization
             }
         } else {
-            System.err.println("[RegionServer] Statement is not initialized. Cannot clear MySQL data.");
+            System.err.println("[RegionServer] Statement 未初始化. 无法清理 MySQL 数据.");
         }
     }
 
     /**
-     * Creates or updates the ZooKeeper node representing this RegionServer.
-     * Stores essential connection information (IP, client listening port, MySQL details).
+     * 使用 ZooKeeperManager.addRegionServer 在 ZK 中创建或更新代表此 RegionServer 的节点结构.
      *
-     * @param zkManager The ZooKeeperManager instance.
+     * @param zkManager ZooKeeperManager 实例.
      */
     public static void createZooKeeperNode(ZooKeeperManager zkManager) {
         try {
-            System.out.println("[RegionServer] Registering with ZooKeeper using ZooKeeperManager.addRegionServer...");
+            System.out.println("[RegionServer] 使用 ZooKeeperManager.addRegionServer 向 ZooKeeper 注册...");
 
-            // 确保 RegionServer.mysqlPort 包含正确的 MySQL 端口号
+            // 调用管理器方法来创建 ZK 结构
             boolean success = zkManager.addRegionServer(
-                    RegionServer.ip,                  // IP of this RegionServer
-                    RegionServer.clientListenPort,    // Port this RS listens on for clients (e.g., 4001)
-                    new ArrayList<>(),                // Initial tables (empty)
-                    RegionServer.mysqlPwd,            // MySQL password
-                    RegionServer.mysqlUser,           // MySQL username
-                    RegionServer.masterCommPort,      // Port Master listens on for RS connections (e.g., 5001)
-                    RegionServer.mysqlPort            // MySQL port for this RegionServer's DB (e.g., 3306)
+                    RegionServer.ip,                  // 本 RegionServer 的 IP
+                    RegionServer.clientListenPort,    // 本 RS 监听客户端的端口 (例如 "4001")
+                    new ArrayList<>(),                // 初始表列表 (空)
+                    RegionServer.mysqlPwd,            // MySQL 密码
+                    RegionServer.mysqlUser,           // MySQL 用户名
+                    RegionServer.masterCommPort,      // Master 监听 RS 的端口 (例如 "5001")
+                    RegionServer.mysqlPort            // 本 RS 的 MySQL 端口 (例如 "3306")
             );
 
             if (success) {
-                System.out.println("[RegionServer] ZooKeeper registration/update successful via ZooKeeperManager for IP: " + RegionServer.ip);
-                RegionServer.serverPath = "/lss/region_server/" + RegionServer.ip; // For reference
+                System.out.println("[RegionServer] ZooKeeper 注册/更新成功 (通过 ZooKeeperManager) IP: " + RegionServer.ip);
+                RegionServer.serverPath = "/lss/region_server/" + RegionServer.ip; // 保存 ZK 路径供参考
             } else {
-                System.err.println("[RegionServer] FATAL: ZooKeeperManager.addRegionServer returned false for IP: " + RegionServer.ip);
-                throw new RuntimeException("ZooKeeper registration failed (addRegionServer returned false)");
+                System.err.println("[RegionServer] 致命错误: ZooKeeperManager.addRegionServer 返回 false, IP: " + RegionServer.ip);
+                throw new RuntimeException("ZooKeeper 注册失败 (addRegionServer 返回 false)");
             }
 
-        } catch (Exception e) { // Catch more general exceptions from addRegionServer
-            System.err.println("[RegionServer] FATAL: Error during ZooKeeper registration: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("[RegionServer] 致命错误: ZooKeeper 注册期间出错: " + e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException("ZooKeeper registration failed", e);
+            throw new RuntimeException("ZooKeeper 注册失败", e);
         }
     }
 
 
     /**
-     * Creates the ServerSocket for listening to direct client connections and
-     * initializes the thread pool for handling them.
+     * 创建用于监听直接客户端连接的 ServerSocket, 并初始化用于处理这些连接的线程池.
      */
     public static void createSocketAndThreadPool() {
         try {
             ServerSocketFactory serverSocketFactory = ServerSocketFactory.getDefault();
-            // Listen on the designated client port
             serverSocket = serverSocketFactory.createServerSocket(Integer.parseInt(clientListenPort));
-            System.out.println("[RegionServer] Server socket created, listening on port: " + clientListenPort);
+            System.out.println("[RegionServer] 服务器 Socket 已创建, 监听端口: " + clientListenPort);
         } catch (IOException e) {
-            System.err.println("[RegionServer] FATAL: Error creating server socket on port " + clientListenPort + ": " + e.getMessage());
+            System.err.println("[RegionServer] 致命错误: 在端口 " + clientListenPort + " 创建服务器 Socket 时出错: " + e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException("Socket creation failed", e);
+            throw new RuntimeException("Socket 创建失败", e);
         }
 
-        // Fixed thread pool for handling client requests
+        // 用于处理客户端请求的固定线程池
         threadPoolExecutor = new ThreadPoolExecutor(
-                10, // corePoolSize
-                50, // maximumPoolSize
-                60L, // keepAliveTime
+                10, // 核心线程数
+                50, // 最大线程数
+                60L, // 保持活动时间
                 TimeUnit.SECONDS,
-                new LinkedBlockingQueue<Runnable>(100), // workQueue (use LinkedBlockingQueue for unbounded)
+                new LinkedBlockingQueue<Runnable>(100), // 工作队列
                 Executors.defaultThreadFactory(),
-                new ThreadPoolExecutor.CallerRunsPolicy() // policy for rejected tasks (can adjust)
+                new ThreadPoolExecutor.CallerRunsPolicy() // 拒绝策略
         );
-        System.out.println("[RegionServer] Thread pool created.");
+        System.out.println("[RegionServer] 线程池已创建.");
     }
 
     /**
-     * Starts the main loop to accept incoming client connections on the clientListenPort.
-     * Each connection is handled by a ServerThread via the thread pool.
-     * This should run in its own thread.
+     * 启动主循环以接受在 clientListenPort 上的入站客户端连接.
+     * 每个连接由线程池中的 ServerThread 处理.
+     * 这个方法应该在它自己的线程中运行.
      */
     public static void startListening() {
         if (serverSocket == null || threadPoolExecutor == null) {
-            System.err.println("[RegionServer] Cannot start listening, socket or thread pool not initialized.");
+            System.err.println("[RegionServer] 无法开始监听，Socket 或线程池未初始化.");
             return;
         }
-        System.out.println("[RegionServer] Starting listener loop for client connections on port " + clientListenPort);
+        System.out.println("[RegionServer] 开始监听循环，处理端口 " + clientListenPort + " 上的客户端连接");
         while (!quitSignal && !serverSocket.isClosed()) {
             try {
                 Socket clientConnSocket = serverSocket.accept();
-                System.out.println("[RegionServer] Accepted connection from: " + clientConnSocket.getRemoteSocketAddress());
-                // Pass the local statement and tables list (if needed by ServerThread logic)
+                System.out.println("[RegionServer] 接收到来自以下地址的连接: " + clientConnSocket.getRemoteSocketAddress());
+                // 传递本地 statement 和 tables 列表 (如果 ServerThread 逻辑需要)
                 ServerThread clientHandler = new ServerThread(clientConnSocket, statement, (ArrayList<TableInform>) tables);
                 threadPoolExecutor.submit(clientHandler);
             } catch (IOException e) {
                 if (quitSignal || serverSocket.isClosed()) {
-                    System.out.println("[RegionServer] Server socket closed, stopping listener loop.");
+                    System.out.println("[RegionServer] 服务器 Socket 已关闭, 停止监听循环.");
                     break;
                 }
-                System.err.println("[RegionServer] Error accepting client connection: " + e.getMessage());
-                // Avoid busy-waiting on error
+                System.err.println("[RegionServer] 接受客户端连接时出错: " + e.getMessage());
                 try {
-                    Thread.sleep(100);
+                    Thread.sleep(100); // 避免错误时空转
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
             }
         }
-        System.out.println("[RegionServer] Listener loop finished.");
-        shutdown(); // Clean up resources when loop ends
+        System.out.println("[RegionServer] 监听循环结束.");
+        // shutdown(); // 监听结束后不一定立即关闭整个服务，除非 quitSignal 被设置
     }
 
 
     /**
-     * Utility method to get the primary non-loopback IP address.
+     * 获取本机主要的非环回 IP 地址的工具方法.
      *
-     * @return String representation of the IP address, or "127.0.0.1" as fallback.
+     * @return IP 地址的字符串表示, 或 "127.0.0.1" 作为备选.
      */
     public static String getIPAddress() {
         try {
-            // Prefer non-loopback IPv4 address
             NetworkInterface networkInterface = NetworkInterface.networkInterfaces()
                     .filter(ni -> {
                         try {
@@ -244,7 +221,6 @@ public class RegionServer {
                     })
                     .findFirst()
                     .orElse(null);
-
             if (networkInterface != null) {
                 InetAddress inetAddress = networkInterface.getInterfaceAddresses().stream()
                         .map(InterfaceAddress::getAddress)
@@ -253,7 +229,6 @@ public class RegionServer {
                         .orElse(InetAddress.getLocalHost()); // Fallback if no IPv4 found on preferred interface
                 return inetAddress.getHostAddress();
             } else {
-                // Fallback if no suitable interface found
                 return InetAddress.getLocalHost().getHostAddress();
             }
         } catch (Exception e) {
@@ -263,76 +238,58 @@ public class RegionServer {
     }
 
     /**
-     * Shuts down the RegionServer resources gracefully.
+     * 优雅地关闭 RegionServer 资源.
      */
     public static void shutdown() {
-        System.out.println("[RegionServer] Shutting down...");
-        quitSignal = true; // Signal listening loop to stop
+        if (quitSignal) return; // 防止重复关闭
+        System.out.println("[RegionServer] 正在关闭...");
+        quitSignal = true; // 信号监听循环停止
 
-        // Shutdown thread pool
+        // 关闭线程池
         if (threadPoolExecutor != null) {
-            threadPoolExecutor.shutdown(); // Disable new tasks from being submitted
+            System.out.println("[RegionServer] 关闭线程池...");
+            threadPoolExecutor.shutdown();
             try {
-                // Wait a while for existing tasks to terminate
-                if (!threadPoolExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
-                    threadPoolExecutor.shutdownNow(); // Cancel currently executing tasks
-                    // Wait a while for tasks to respond to being cancelled
-                    if (!threadPoolExecutor.awaitTermination(60, TimeUnit.SECONDS))
-                        System.err.println("[RegionServer] Pool did not terminate");
+                if (!threadPoolExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    threadPoolExecutor.shutdownNow();
+                    if (!threadPoolExecutor.awaitTermination(10, TimeUnit.SECONDS))
+                        System.err.println("[RegionServer] 线程池未能终止");
                 }
             } catch (InterruptedException ie) {
-                // (Re-)Cancel if current thread also interrupted
                 threadPoolExecutor.shutdownNow();
-                // Preserve interrupt status
                 Thread.currentThread().interrupt();
             }
+            System.out.println("[RegionServer] 线程池已关闭.");
         }
 
-        // Close server socket
+        // 关闭服务器 Socket
         if (serverSocket != null && !serverSocket.isClosed()) {
             try {
                 serverSocket.close();
-                System.out.println("[RegionServer] Server socket closed.");
+                System.out.println("[RegionServer] 服务器 Socket 已关闭.");
             } catch (IOException e) {
-                System.err.println("[RegionServer] Error closing server socket: " + e.getMessage());
+                System.err.println("[RegionServer] 关闭服务器 Socket 时出错: " + e.getMessage());
             }
         }
 
-        // Close database connection
+        // 关闭数据库连接
         try {
             if (statement != null && !statement.isClosed()) {
                 statement.close();
             }
             if (connection != null && !connection.isClosed()) {
                 connection.close();
-                System.out.println("[RegionServer] Database connection closed.");
+                System.out.println("[RegionServer] 数据库连接已关闭.");
             }
         } catch (SQLException e) {
-            System.err.println("[RegionServer] Error closing database resources: " + e.getMessage());
+            System.err.println("[RegionServer] 关闭数据库资源时出错: " + e.getMessage());
         }
 
-        // Close ZooKeeper connection
+        // 关闭 ZooKeeper 连接
         if (zooKeeperManager != null) {
             zooKeeperManager.close();
-            System.out.println("[RegionServer] ZooKeeper connection closed.");
+            System.out.println("[RegionServer] ZooKeeper 连接已关闭.");
         }
-        System.out.println("[RegionServer] Shutdown complete.");
+        System.out.println("[RegionServer] 关闭完成.");
     }
-
-    // Utility method to get an available TCP port (use with caution, race conditions possible)
-    // It's generally better to use a fixed, configured port.
-    /*
-    public static int getAvailableTcpPort() {
-        for (int i = 4000; i <= 5000; i++) { // Scan a smaller range
-            try (ServerSocket ss = new ServerSocket(i)) {
-                ss.setReuseAddress(true); // Allow faster reuse
-                return i;
-            } catch (IOException e) {
-                // Port likely in use
-            }
-        }
-        System.err.println("[RegionServer] WARN: No available port found in range 4000-5000. Falling back to 0 (OS default).");
-        return 0; // Let the OS pick a port if none found
-    }
-    */
 }

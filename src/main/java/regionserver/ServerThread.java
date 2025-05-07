@@ -116,13 +116,6 @@ public class ServerThread implements Runnable {
             ResultSetMetaData rsmd = rs.getMetaData();
             int columnCount = rsmd.getColumnCount();
 
-            // Send column names as the first line (optional, depends on client expectation)
-            // StringBuilder header = new StringBuilder();
-            // for (int i = 1; i <= columnCount; i++) {
-            //     header.append(rsmd.getColumnName(i)).append(i == columnCount ? "" : "\t"); // Tab separated
-            // }
-            // writer.write("COLUMNS:" + header.toString() + "\n"); // Example prefix
-
             // Send data rows
             int rowCount = 0;
             while (rs.next()) {
@@ -155,25 +148,6 @@ public class ServerThread implements Runnable {
             }
         }
     }
-
-
-    // --- Methods for handling Master/RegionServer identified connections (if needed) ---
-    // These might be removed if all Master communication goes via regionserver.Client
-    // and RS-to-RS communication uses a different mechanism or port.
-
-    /*
-    public void serveMaster() throws IOException {
-        // Logic to handle commands specifically from a connection identified as Master
-        // ... (Example: Trigger migration, dump)
-        reactCmd(true, "Master command received.");
-    }
-
-    public void serveRegionServer() throws IOException {
-        // Logic to handle commands specifically from a connection identified as another RegionServer
-        // ... (Example: Receive migrated data)
-         reactCmd(true, "RegionServer command received.");
-    }
-    */
 
     /**
      * Responds to the connected client/master/server.
