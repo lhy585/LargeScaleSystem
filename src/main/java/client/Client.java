@@ -223,6 +223,7 @@ public class Client {
                             while ((responseLine = masterIn.readLine()) != null) {
                                 System.out.println(responseLine);
                             }
+
                             System.out.println("--- End of Response ---");
                         } catch (IOException e) {
                             System.err.println("Error communicating with Master: " + e.getMessage());

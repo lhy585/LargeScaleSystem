@@ -195,9 +195,10 @@ public class Master {
                         case INSERT:
                             // output.println("✅ 获取到INSERT 语句"); // 由SqlSocket打印到控制台
                             res = insert(tableNames, sql);
-                            for (String tableName : parsedSqlResult.getTableNames()) {
-                                outputDmlResponse(output, tableName, res, "INSERT");
-                            }
+//                            for (String tableName : parsedSqlResult.getTableNames()) {
+//                                outputDmlResponse(output, tableName, res, "INSERT");
+//                            }
+                            output.println(res);
                             break;
                         case DELETE:
                             res = delete(tableNames, sql);

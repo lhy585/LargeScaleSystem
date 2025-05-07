@@ -51,6 +51,7 @@ public class ZooKeeperUtils implements Watcher {
 			System.out.println("Detected a client has created: " + event.getPath());
 			try{
 				this.setWatch(event.getPath());
+				System.out.println("set watch at "+event.getPath());
 				List<String> regions = getChildren(event.getPath());
 				for(int i=0;i<regions.size();i++){
 					System.out.println("set watch path is "+event.getPath()+"/"+regions.get(i)+"/exist");
@@ -77,6 +78,7 @@ public class ZooKeeperUtils implements Watcher {
 			}
 		}
 		if(event.getType() == Event.EventType.NodeDeleted){
+			System.out.println("Detected a client has disconnected.");
 			String path = event.getPath();
 			// 从路径中提取IP应该更健壮
 			// 例如: /lss/region_server/192.168.140.1/exist -> 192.168.140.1
@@ -97,6 +99,13 @@ public class ZooKeeperUtils implements Watcher {
 						break;
 					default: // 处理其他可能的枚举值
 						System.out.println("Del region returned: " + res);
+				}
+				try{
+					System.out.println("[ZooKeeperUtils] Deleting ZK path: " + path);
+					deleteNodeRecursively(path.substring(0, path.length() - 6));
+				}
+				catch(Exception e){
+					e.printStackTrace();
 				}
 				// 删除父节点 /lss/region_server/ip 的操作应该由RegionManager决定，
 				// 或者在 ZK 会话超时后自动清理（如果父节点也是临时的，但这里不是）

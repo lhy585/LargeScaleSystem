@@ -180,29 +180,26 @@ public class RegionManager {
 
     private static void regularRecoverData() {
         List<String> recovered = new ArrayList<>();
-        for (String tableName : new ArrayList<>(toBeCopiedTable)) { // Iterate copy for safety
+        for (String tableName : new ArrayList<>(toBeCopiedTable)) {
             String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
             String slaveTableName = masterTableName + "_slave";
 
-            // Use findTable (which checks ZK) to determine existence
             ResType masterStatus = findTable(masterTableName);
             ResType slaveStatus = findTable(slaveTableName);
 
-            if (masterStatus == ResType.FIND_TABLE_NO_EXISTS && slaveStatus == ResType.FIND_SUCCESS) {
+            if (masterStatus == ResType.FIND_TABLE_NO_EXISTS && slaveStatus == ResType.FIND_SUCCESS) { //母本丢失
                 System.out.println("[RegionManager] Recovering missing master table: " + masterTableName + " from slave: " + slaveTableName);
                 if (addSameTable(masterTableName, slaveTableName)) {
-                    recovered.add(tableName); // Mark for removal from toBeCopiedTable
+                    recovered.add(tableName);
                 }
-            } else if (slaveStatus == ResType.FIND_TABLE_NO_EXISTS && masterStatus == ResType.FIND_SUCCESS) {
+            } else if (slaveStatus == ResType.FIND_TABLE_NO_EXISTS && masterStatus == ResType.FIND_SUCCESS) { //副本丢失
                 System.out.println("[RegionManager] Recovering missing slave table: " + slaveTableName + " from master: " + masterTableName);
                 if (addSameTable(slaveTableName, masterTableName)) {
-                    recovered.add(tableName); // Mark for removal from toBeCopiedTable
+                    recovered.add(tableName);
                 }
             } else if (masterStatus == ResType.FIND_SUCCESS && slaveStatus == ResType.FIND_SUCCESS) {
-                // Both exist, no longer needs copying
                 recovered.add(tableName);
             } else {
-                // Both missing or other error, cannot recover currently
                 System.out.println("[RegionManager] Cannot recover " + tableName + ", master exists: " + (masterStatus == ResType.FIND_SUCCESS) + ", slave exists: " + (slaveStatus == ResType.FIND_SUCCESS));
             }
         }
@@ -218,23 +215,20 @@ public class RegionManager {
         }
         Integer load = regionsInfo.get(templateRegionName).get(templateTableName);
         //新建
-        String addRegionName = getLeastRegionName(templateTableName); // Ensures master/slave separation
+        String addRegionName = getLeastRegionName(templateTableName);
         if (addRegionName == null) {
             System.err.println("[RegionManager] Cannot add table " + addTableName + ": No suitable region server found.");
             return false;
         }
 
-        // Update local info first (optimistic)
         if (!regionsInfo.containsKey(addRegionName)) {
             regionsInfo.put(addRegionName, new LinkedHashMap<>());
         }
-        regionsInfo.get(addRegionName).put(addTableName, load); // Add with template's load
-
+        regionsInfo.get(addRegionName).put(addTableName, load);
         //通知ZooKeeper
         boolean zkSuccess = zooKeeperManager.addTable(addRegionName, new TableInform(addTableName, load));
         if (!zkSuccess) {
             System.err.println("[RegionManager] Failed to add table " + addTableName + " to ZooKeeper for region " + addRegionName);
-            // Rollback local info change?
             if (regionsInfo.containsKey(addRegionName)) {
                 regionsInfo.get(addRegionName).remove(addTableName);
             }
@@ -245,8 +239,7 @@ public class RegionManager {
         boolean commandSent = sendCopyTableCommand(templateRegionName, addRegionName, templateTableName, addTableName);
         if (!commandSent) {
             System.err.println("[RegionManager] Failed to send copy command from " + templateRegionName + " to " + addRegionName + " for table " + addTableName);
-            // Consider cleanup: remove ZK node, rollback local info? Complex recovery needed.
-            zooKeeperManager.deleteTable(addTableName); // Attempt to remove ZK entry
+            zooKeeperManager.deleteTable(addTableName);
             if (regionsInfo.containsKey(addRegionName)) {
                 regionsInfo.get(addRegionName).remove(addTableName);
             }
@@ -267,12 +260,12 @@ public class RegionManager {
     public static Map<String, Integer> sortLoadAsc(Map<String, Integer> loads){
         return loads.entrySet()
                 .stream()
-                .sorted(Map.Entry.comparingByValue()) // Ascending
+                .sorted(Map.Entry.comparingByValue())
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
                         Map.Entry::getValue,
                         (e1, e2) -> e1,
-                        LinkedHashMap::new // Keep order
+                        LinkedHashMap::new
                 ));
     }
 
@@ -283,12 +276,12 @@ public class RegionManager {
     public static Map<String, Integer> sortLoadDsc(Map<String, Integer> loads){
         return loads.entrySet()
                 .stream()
-                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())// Descending
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
                         Map.Entry::getValue,
                         (e1, e2) -> e1,
-                        LinkedHashMap::new // Keep order
+                        LinkedHashMap::new
                 ));
     }
 
@@ -399,11 +392,11 @@ public class RegionManager {
                 try {
                     String existPath = "/lss/region_server/" + regionName + "/exist";
                     if (zooKeeperUtils.nodeExists(existPath)) {
-                        zooKeeperUtils.setWatch(existPath); // Watch for deletion
+                        zooKeeperUtils.setWatch(existPath);
                     }
                     String dataPath = "/lss/region_server/" + regionName + "/data";
                     if (zooKeeperUtils.nodeExists(dataPath)) {
-                        zooKeeperUtils.setWatch(dataPath); // Watch for data changes
+                        zooKeeperUtils.setWatch(dataPath);
                     }
                 } catch (Exception e) {
                     System.err.println("[RegionManager] Warning: Failed to set initial watch on new region: " + regionName + " - " + e.getMessage());
@@ -422,9 +415,8 @@ public class RegionManager {
         }
 
         System.out.println("[RegionManager] Adding new region: " + addRegionName);
-        // Add the new region with an empty table list to our local info first
         regionsInfo.put(addRegionName, new LinkedHashMap<>());
-        sortAndUpdate(); // Recalculate average load including the new server
+        sortAndUpdate();
 
         Integer avgLoad = loadsAvg; // Use the recalculated average
         Map<String, Integer> addTablesInfo = new LinkedHashMap<>();
@@ -434,7 +426,7 @@ public class RegionManager {
 
         while (addRegionLoadSum < avgLoad) {
             sortAndUpdate();
-            String largestRegionName = getLargestRegionName(addTablesInfo); // Find suitable source region
+            String largestRegionName = getLargestRegionName(addTablesInfo);
 
             if (largestRegionName == null) {
                 System.out.println("[RegionManager] No suitable source region found to migrate tables from.");
@@ -442,7 +434,7 @@ public class RegionManager {
             }
 
             Map<String, Integer> largestRegionTables = regionsInfo.get(largestRegionName);
-            if (largestRegionTables == null || largestRegionTables.size() <= 1) { // Leave at least one table? Or allow empty? Let's allow moving the last table.
+            if (largestRegionTables == null || largestRegionTables.size() <= 1) {
                 if (largestRegionTables == null || largestRegionTables.isEmpty()) {
                     System.out.println("[RegionManager] Source region " + largestRegionName + " has no tables to migrate.");
                     break;
