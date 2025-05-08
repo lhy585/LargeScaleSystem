@@ -150,88 +150,86 @@ public class Master {
             System.out.println("[Info] New client connected: " + socket.getInetAddress() + ":" + socket.getPort());
 
             try {
-                String sql;
-                //持续接受并读取客户端输入
-                while (isSocketAlive(socket) && (sql = input.readLine()) != null) {
-                    sqlSocket.parseSql(sql);//处理字符串
+                String sql = input.readLine();
+
+                if (sql == null || sql.trim().isEmpty()) {
+                    System.out.println("[Master-ClientHandler] Client disconnected or sent empty command.");
+                } else {
+                    sqlSocket.parseSql(sql); //处理字符串 (日志在 Master 控制台)
                     ParsedSqlResult parsedSqlResult = sqlSocket.getParsedSqlResult();
 
                     if (parsedSqlResult == null || parsedSqlResult.getType() == SqlType.UNKNOWN) {
                         output.println("ERROR: Invalid SQL or unable to parse.");
-                        continue;
-                    }
+                    } else {
+                        List<String> tableNames = parsedSqlResult.getTableNames();
+                        SqlType type = parsedSqlResult.getType();
+                        Map<String, ResType> res;
 
-                    List<String> tableNames = parsedSqlResult.getTableNames();
-                    SqlType type = parsedSqlResult.getType();
-
-                    Map<String, ResType> res;
-                    switch (type) {
-                        case CREATE:
-                            // System.out.println("✅ 获取到CREATE TABLE 语句"); // 由SqlSocket打印到控制台
-                            res = createTable(tableNames, sql);
-                            for (String tableName : tableNames) {
-                                if (res.containsKey(tableName) && res.get(tableName) == ResType.CREATE_TABLE_SUCCESS) {
-                                    output.println("Create Table " + tableName + " successfully");
-                                } else if (res.containsKey(tableName) && res.get(tableName) == ResType.CREATE_TABLE_ALREADY_EXISTS) {
-                                    output.println("Create Table " + tableName + " failed: Already exists.");
-                                } else {
-                                    output.println("Create Table " + tableName + " failed. Status: " + (res.get(tableName) != null ? res.get(tableName) : "UNKNOWN_ERROR"));
+                        switch (type) {
+                            case CREATE:
+                                res = createTable(tableNames, sql);
+                                for (String tableName : tableNames) { // 为每个涉及的表发送响应行
+                                    if (res.containsKey(tableName) && res.get(tableName) == ResType.CREATE_TABLE_SUCCESS) {
+                                        output.println("Create Table " + tableName + " successfully");
+                                    } else if (res.containsKey(tableName) && res.get(tableName) == ResType.CREATE_TABLE_ALREADY_EXISTS) {
+                                        output.println("Create Table " + tableName + " failed: Already exists.");
+                                    } else {
+                                        output.println("Create Table " + tableName + " failed. Status: " + (res.get(tableName) != null ? res.get(tableName) : "UNKNOWN_ERROR"));
+                                    }
                                 }
-                            }
-                            break;
-                        case DROP:
-                            // output.println("✅ 获取到DROP TABLE 语句"); // 由SqlSocket打印到控制台
-                            res = dropTable(tableNames, sql);
-                            for (String tableName : tableNames) {
-                                if (res.containsKey(tableName) && res.get(tableName) == ResType.DROP_TABLE_SUCCESS) {
-                                    output.println("Drop Table " + tableName + " successfully");
-                                } else if (res.containsKey(tableName) && res.get(tableName) == ResType.DROP_TABLE_NO_EXISTS){
-                                    output.println("Drop Table " + tableName + " failed: Table does not exist.");
-                                } else {
-                                    output.println("Drop Table " + tableName + " failed. Status: " + (res.get(tableName) != null ? res.get(tableName) : "UNKNOWN_ERROR"));
+                                break;
+                            case DROP:
+                                res = dropTable(tableNames, sql);
+                                for (String tableName : tableNames) { // 发送多行响应
+                                    if (res.containsKey(tableName) && res.get(tableName) == ResType.DROP_TABLE_SUCCESS) {
+                                        output.println("Drop Table " + tableName + " successfully");
+                                    } else if (res.containsKey(tableName) && res.get(tableName) == ResType.DROP_TABLE_NO_EXISTS){
+                                        output.println("Drop Table " + tableName + " failed: Table does not exist.");
+                                    } else {
+                                        output.println("Drop Table " + tableName + " failed. Status: " + (res.get(tableName) != null ? res.get(tableName) : "UNKNOWN_ERROR"));
+                                    }
                                 }
-                            }
-                            break;
-                        case INSERT:
-                            // output.println("✅ 获取到INSERT 语句"); // 由SqlSocket打印到控制台
-                            res = insert(tableNames, sql);
-//                            for (String tableName : parsedSqlResult.getTableNames()) {
-//                                outputDmlResponse(output, tableName, res, "INSERT");
-//                            }
-                            output.println(res);
-                            break;
-                        case DELETE:
-                            res = delete(tableNames, sql);
-                            for (String tableName : parsedSqlResult.getTableNames()) {
-                                outputDmlResponse(output, tableName, res, "DELETE");
-                            }
-                            break;
-                        case UPDATE:
-                            res = update(tableNames, sql);
-                            for (String tableName : parsedSqlResult.getTableNames()) {
-                                outputDmlResponse(output, tableName, res, "UPDATE");
-                            }
-                            break;
-                        case ALTER:
-                            res = alter(tableNames, sql);
-                            for (String tableName : parsedSqlResult.getTableNames()) {
-                                outputDmlResponse(output, tableName, res, "ALTER");
-                            }
-                            break;
-                        case SELECT:
-                            SelectInfo selectInfo = select(tableNames, sql);
-                            String responseToClient = selectInfo.Serialize();
-                            output.println(responseToClient);
-                            break;
-                        case TRUNCATE:
-                            res = truncate(tableNames, sql);
-                            for (String tableName : parsedSqlResult.getTableNames()) {
-                                outputDmlResponse(output, tableName, res, "TRUNCATE");
-                            }
-                            break;
-                        default:
-                            output.println("ERROR: Unsupported SQL command type: " + type);
-                            break;
+                                break;
+                            case INSERT:
+                                res = insert(tableNames, sql);
+                                for (String tableName : parsedSqlResult.getTableNames()) { // 发送多行响应
+                                    outputDmlResponse(output, tableName, res, "INSERT");
+                                }
+                                // output.println(res); // 之前的简单响应方式被取代
+                                break;
+                            case DELETE:
+                                res = delete(tableNames, sql);
+                                for (String tableName : parsedSqlResult.getTableNames()) { // 发送多行响应
+                                    outputDmlResponse(output, tableName, res, "DELETE");
+                                }
+                                break;
+                            case UPDATE:
+                                res = update(tableNames, sql);
+                                for (String tableName : parsedSqlResult.getTableNames()) { // 发送多行响应
+                                    outputDmlResponse(output, tableName, res, "UPDATE");
+                                }
+                                break;
+                            case ALTER:
+                                res = alter(tableNames, sql);
+                                for (String tableName : parsedSqlResult.getTableNames()) { // 发送多行响应
+                                    outputDmlResponse(output, tableName, res, "ALTER");
+                                }
+                                break;
+                            case SELECT:
+                                SelectInfo selectInfo = select(tableNames, sql);
+                                String responseToClient = selectInfo.Serialize();
+                                output.println(responseToClient); // 发送单行响应
+                                break;
+                            case TRUNCATE:
+                                res = truncate(tableNames, sql);
+                                for (String tableName : parsedSqlResult.getTableNames()) { // 发送多行响应
+                                    outputDmlResponse(output, tableName, res, "TRUNCATE");
+                                }
+                                break;
+                            default:
+                                output.println("ERROR: Unsupported SQL command type: " + type);
+                                break;
+                        }
                     }
                 }
             } catch (IOException e) {
