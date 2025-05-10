@@ -100,6 +100,20 @@ public class Client {
                                 System.out.println("--- RegionServer Response ---");
                                 String responseLine;
                                 boolean dataReceived = false;
+                                String headerLine = rsIn.readLine();
+                                if (headerLine == null) {
+                                    System.out.println("No data available.");
+                                    return;
+                                }
+
+                                // 分割列名
+                                String[] headers = headerLine.split(" ");
+                                int columnCount = headers.length;
+
+                                // 打印表头
+                                printTableHeader(headers);
+
+                                // 读取数据行
                                 while ((responseLine = rsIn.readLine()) != null) {
                                     if ("END_OF_DATA".equals(responseLine)) {
                                         break;
@@ -109,7 +123,12 @@ public class Client {
                                         dataReceived = true;
                                         break;
                                     }
-                                    System.out.println(responseLine);
+
+                                    // 分割数据行
+                                    String[] data = responseLine.split(" ");
+                                    if (data.length == columnCount) {
+                                        printTableRow(data);
+                                    }
                                     dataReceived = true;
                                 }
                                 if (!dataReceived) {
@@ -187,14 +206,35 @@ public class Client {
                                     System.out.println("--- RegionServer Response ---");
                                     String responseLine;
                                     boolean dataReceived = false;
+                                    String headerLine = rsIn.readLine();
+                                    if (headerLine == null) {
+                                        System.out.println("No data available.");
+                                        return;
+                                    }
+
+                                    // 分割列名
+                                    String[] headers = headerLine.split(" ");
+                                    int columnCount = headers.length;
+
+                                    // 打印表头
+                                    printTableHeader(headers);
+
+                                    // 读取数据行
                                     while ((responseLine = rsIn.readLine()) != null) {
-                                        if ("END_OF_DATA".equals(responseLine)) break;
+                                        if ("END_OF_DATA".equals(responseLine)) {
+                                            break;
+                                        }
                                         if (responseLine.startsWith("ERROR:")) {
                                             System.out.println(responseLine);
                                             dataReceived = true;
                                             break;
                                         }
-                                        System.out.println(responseLine);
+
+                                        // 分割数据行
+                                        String[] data = responseLine.split(" ");
+                                        if (data.length == columnCount) {
+                                            printTableRow(data);
+                                        }
                                         dataReceived = true;
                                     }
                                     if (!dataReceived) System.out.println("(No data rows received or connection closed prematurely)");
@@ -256,6 +296,39 @@ public class Client {
                 System.err.println("Error parsing table name from SELECT: " + e.getMessage());
             }
             return null;
+        }
+        private static void printTableHeader(String[] headers) {
+            // 打印表头分隔线
+            printLine(headers.length);
+            // 打印表头
+            System.out.print("|");
+            for (String header : headers) {
+                System.out.printf(" %s |", header);
+            }
+            System.out.println();
+            // 打印表头分隔线
+            printLine(headers.length);
+        }
+
+        private static void printTableRow(String[] data) {
+            System.out.print("|");
+            for (String cell : data) {
+                System.out.printf(" %s |", cell);
+            }
+            System.out.println();
+        }
+
+        private static void printTableFooter(int columnCount) {
+            // 打印表尾分隔线
+            printLine(columnCount);
+        }
+
+        private static void printLine(int columnCount) {
+            System.out.print("+");
+            for (int i = 0; i < columnCount; i++) {
+                System.out.print("-----+");
+            }
+            System.out.println();
         }
     }
     // create table t1(id int, name char(20))

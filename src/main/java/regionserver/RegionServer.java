@@ -38,7 +38,7 @@ public class RegionServer {
     static {
         ip = getIPAddress();
         mysqlUser = "root"; // 示例用户名
-        mysqlPwd = "040517cc"; // 示例密码 (生产环境应使用安全方式配置)
+        mysqlPwd = "429915"; // 示例密码 (生产环境应使用安全方式配置)
         tables = new ArrayList<>(); // 初始化列表
     }
 

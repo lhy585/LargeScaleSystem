@@ -115,9 +115,16 @@ public class ServerThread implements Runnable {
 
             ResultSetMetaData rsmd = rs.getMetaData();
             int columnCount = rsmd.getColumnCount();
-
+            StringBuilder row1 = new StringBuilder();
+            for(int i=1;i<=columnCount;i++){
+                row1.append(rsmd.getColumnName(i));
+                if(i<columnCount){
+                    row1.append("\t");
+                }
+            }
+            writer.write(row1.toString() + "\n"); // Send one row per line
             // Send data rows
-            int rowCount = 0;
+            int rowCount = 1;
             while (rs.next()) {
                 StringBuilder row = new StringBuilder();
                 for (int i = 1; i <= columnCount; i++) {

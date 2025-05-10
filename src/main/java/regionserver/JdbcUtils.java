@@ -14,7 +14,7 @@ public class JdbcUtils {
         url = "jdbc:mysql://localhost:3306/?characterEncoding=utf-8&"
                 + "useSSL=false&serverTimezone=UTC&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true";
         user = "root";
-        pwd = "040517cc";
+        pwd = "429915";
     }
 
     /**

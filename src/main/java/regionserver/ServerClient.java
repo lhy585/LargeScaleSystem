@@ -95,8 +95,8 @@ public class ServerClient {
                 }
                 res.append("\n");
             }
+            System.out.println("[ServerClient] result is "+res);
             return res.toString();
-
         } catch (SQLException e) {
             System.err.println("[ServerClient] SQLException during SELECT: " + e.getMessage() + " SQL: " + sqlCmd);
             // e.printStackTrace(); // Uncomment for full stack trace
