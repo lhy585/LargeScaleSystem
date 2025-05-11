@@ -252,9 +252,9 @@ public class Client {
             return false;
         }
         String sourceHost = parts[0];
-        String sourcePort = parts[1];
-        String sourceUser = parts[2];
-        String sourcePwd = parts[3];
+        String sourcePort = parts[2];
+        String sourceUser = parts[3];
+        String sourcePwd = parts[1];
         String sourceTable = parts[4];
         String targetTable = parts[5]; // 这是在本 RegionServer 上创建的表名
 
