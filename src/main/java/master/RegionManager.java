@@ -1211,10 +1211,46 @@ public class RegionManager {
      * @return true if the initial command was sent successfully.
      */
     private static boolean sendMigrateTableCommand(String sourceRegionName, String targetRegionName, String tableName) {
-        System.out.println("[RegionManager] Initiating migration step 1: Copying " + tableName + " from " + sourceRegionName + " to " + targetRegionName);
-        boolean copySent = sendCopyTableCommand(sourceRegionName, targetRegionName, tableName, tableName);
-        return copySent;
+        System.out.println("[RegionManager] 准备发送 MIGRATE_TABLE_FROM_SOURCE 命令给目标 Region " + targetRegionName +
+                " 以迁移表 " + tableName + " 从源 " + sourceRegionName);
+
+        // 1. 从 ZK 获取源 RegionServer 的 MySQL 连接详细信息
+        String sourceDbDetailsString = getRegionConnectionString(sourceRegionName, true); // true 表示获取DB细节
+        if (sourceDbDetailsString == null) {
+            System.err.println("[RegionManager] 无法发送 MIGRATE 命令: 获取源 " + sourceRegionName + " 的DB连接信息失败。");
+            return false;
+        }
+        String[] sourceDetails = sourceDbDetailsString.split(","); // 期望格式: host,dbPort,dbUser,dbPwd
+        if (sourceDetails.length < 4) {
+            System.err.println("[RegionManager] 源 " + sourceRegionName + " 的DB连接信息格式不正确: " + sourceDbDetailsString);
+            return false;
+        }
+        // sourceDetails[0] 是 sourceRegionName (IP)
+        // sourceDetails[1] 是 sourceMysqlPort
+        // sourceDetails[2] 是 sourceMysqlUser
+        // sourceDetails[3] 是 sourceMysqlPwd
+
+        // 2. 构建 "MIGRATE_TABLE_FROM_SOURCE" 命令
+        // 格式: MIGRATE_TABLE_FROM_SOURCE <source_host_ip> <source_mysql_port> <source_mysql_user> <source_mysql_pwd> <table_name_to_migrate>
+        String command = String.format("MIGRATE_TABLE_FROM_SOURCE %s %s %s %s %s",
+                sourceDetails[0], // sourceRegionName (作为 host_ip)
+                sourceDetails[1], // sourceMysqlPort
+                sourceDetails[2], // sourceMysqlUser
+                sourceDetails[3], // sourceMysqlPwd (安全风险)
+                tableName);
+
+        // 3. 将此命令发送给 *目标* RegionServer (targetRegionName)
+        boolean commandSent = sendSqlCommandToRegion(targetRegionName, command); // sendSqlCommandToRegion 已包含重试
+
+        if (commandSent) {
+            System.out.println("[RegionManager] MIGRATE_TABLE_FROM_SOURCE 命令已成功发送给 Region " + targetRegionName + "。");
+            // 注意: 这只表示命令已发送。实际迁移成功与否需要目标RegionServer反馈。
+        } else {
+            System.err.println("[RegionManager] MIGRATE_TABLE_FROM_SOURCE 命令发送给 Region " + targetRegionName + " 失败。");
+        }
+        return commandSent;
     }
+
 
     /**
      * Helper to get the connection string for a region server, needed by clients.

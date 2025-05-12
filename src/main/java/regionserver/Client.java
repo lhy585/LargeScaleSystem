@@ -194,6 +194,10 @@ public class Client {
                 commandType = "COPY_TABLE";
                 success = handleCopyTableCommand(sqlCommand);
             }
+            else if (trimmedCommand.startsWith("migrate_table_from_source ")) { // 注意末尾空格
+                commandType = "MIGRATE_TABLE_FROM_SOURCE";
+                success = handleFullMigrateCommand(sqlCommand); // 新的处理函数
+            }
             else {
                 System.err.println("[RegionServer Process] 收到无法识别的命令结构: " + sqlCommand);
                 commandType = "EXECUTE_UNKNOWN";
@@ -288,6 +292,39 @@ public class Client {
         return copySuccess;
     }
 
+    /**
+     * 处理 Master 发送的完整迁移命令。
+     * 格式: MIGRATE_TABLE_FROM_SOURCE <source_host_ip> <source_mysql_port> <source_mysql_user> <source_mysql_pwd> <table_name_to_migrate>
+     */
+    private boolean handleFullMigrateCommand(String command) {
+        String prefix = "MIGRATE_TABLE_FROM_SOURCE ";
+        if (!command.startsWith(prefix)) {
+            System.err.println("[RegionServer Process] MIGRATE_TABLE_FROM_SOURCE 命令格式错误 (前缀不匹配): " + command);
+            return false;
+        }
+        String params = command.substring(prefix.length());
+        String[] parts = params.split("\\s+"); // 按空格分割参数
+        if (parts.length != 5) {
+            System.err.println("[RegionServer Process] MIGRATE_TABLE_FROM_SOURCE 命令参数数量错误 (期望5个): " + params);
+            return false;
+        }
+        String sourceHost = parts[0];
+        String sourcePort = parts[1];
+        String sourceUser = parts[2];
+        String sourcePwd = parts[3];
+        String tableName = parts[4]; // 表在源和目标上名称相同
+
+        System.out.println("[RegionServer Process] 收到完整迁移请求: 表 " + tableName + " 从源 " + sourceHost + ":" + sourcePort);
+
+        // 调用 ServerMaster.executeCompleteMigrationSteps
+        // 它会：1. dumpTable (从源拉取并导入本地) 2. 连接到源并删除源表
+        return ServerMaster.executeCompleteMigrationSteps(
+                sourceHost, sourcePort, sourceUser, sourcePwd, // 源数据库连接信息
+                tableName,
+                RegionServer.mysqlUser, // 当前 RegionServer (目标) 的 MySQL 用户名
+                RegionServer.mysqlPwd   // 当前 RegionServer (目标) 的 MySQL 密码
+        );
+    }
 
     /**
      * 向 Master 发送响应消息.

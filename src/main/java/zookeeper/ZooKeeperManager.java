@@ -7,7 +7,7 @@ import java.util.List;
 
 public class ZooKeeperManager {
     public ZooKeeperUtils zooKeeperUtils;
-    public String address = "127.0.0.1"; // 最好从配置文件读取
+    public String address = "10.162.132.242"; // 最好从配置文件读取
     public String port = "2181";    // 最好从配置文件读取
 
     public ZooKeeperManager() {
@@ -271,6 +271,31 @@ public class ZooKeeperManager {
             return true;
         }
         catch(Exception e){
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * 从指定的 RegionServer 的 ZooKeeper 记录中删除一个表及其元数据。
+     *
+     * @param regionIp 要从中删除表的 RegionServer 的 IP 地址。
+     * @param tableName 要删除的表名。
+     * @return 如果成功删除或节点本就不存在，则返回 true；否则返回 false。
+     */
+    public boolean deleteTableFromSpecificRegion(String regionIp, String tableName) {
+        try {
+            String tablePath = "/lss/region_server/" + regionIp + "/table/" + tableName;
+            if (zooKeeperUtils.nodeExists(tablePath)) {
+                zooKeeperUtils.deleteNodeRecursively(tablePath);
+                System.out.println("[ZKManager] 已从 Region " + regionIp + " 的 ZK 记录中删除表: " + tableName);
+                return true;
+            } else {
+                System.out.println("[ZKManager] 在 Region " + regionIp + " 的 ZK 记录中未找到表 " + tableName + " (用于删除)。");
+                return true; // 如果节点本就不存在，也视为成功（目标已达成）
+            }
+        } catch (Exception e) {
+            System.err.println("[ZKManager] 从 Region " + regionIp + " 的 ZK 记录中删除表 " + tableName + " 失败: " + e.getMessage());
             e.printStackTrace();
             return false;
         }
