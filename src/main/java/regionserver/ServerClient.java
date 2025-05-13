@@ -175,7 +175,7 @@ public class ServerClient {
             if (sqlLower.startsWith("create table")) {
                 if (parts.length > 2) return cleanName(parts[2]);
             } else if (sqlLower.startsWith("drop table")) {
-                if (parts.length > 2) return cleanName(parts[2]);
+                if (parts.length > 2) return cleanName(parts[5]);
             } else if (sqlLower.startsWith("alter table")) {
                 if (parts.length > 2) return cleanName(parts[2]);
             } else if (sqlLower.startsWith("insert into")) {

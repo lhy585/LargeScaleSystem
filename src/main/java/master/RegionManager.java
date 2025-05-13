@@ -424,7 +424,7 @@ public class RegionManager {
 
         System.out.println("[RegionManager] Balancing load for new region " + addRegionName + ". Target avg load: " + avgLoad);
 
-        while (addRegionLoadSum < avgLoad) {
+        while (addRegionLoadSum <= avgLoad) {
             sortAndUpdate();
             String largestRegionName = getLargestRegionName(addTablesInfo);
 
@@ -517,7 +517,7 @@ public class RegionManager {
                 regionsInfo.put(leastRegionName, new LinkedHashMap<>());
             }
             regionsInfo.get(leastRegionName).put(tableName, tableLoad);
-            //TODO:迁移操作
+
             boolean zkSuccess = zooKeeperManager.addTable(leastRegionName, new TableInform(tableName, tableLoad));
             if (!zkSuccess) {
                 System.err.println("[RegionManager] Failed to update ZooKeeper for migrated table " + tableName + " to region " + leastRegionName);
