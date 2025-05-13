@@ -473,6 +473,7 @@ public class RegionManager {
             //处理表迁入的region server
             addTablesInfo.put(tableNameToMove, tableLoadToMove);
             addRegionLoadSum += tableLoadToMove;
+            zooKeeperManager.deleteTable(tableNameToMove);
             zooKeeperManager.addTable(addRegionName, new TableInform(tableNameToMove, tableLoadToMove));
         }
         regionsInfo.put(addRegionName, addTablesInfo);
@@ -525,12 +526,7 @@ public class RegionManager {
             tablesInfo.put(tableName, tableLoad);
             regionsInfo.put(leastRegionName, tablesInfo);
 
-            boolean zkSuccess = zooKeeperManager.addTable(leastRegionName, new TableInform(tableName, tableLoad));
-            if (!zkSuccess) {
-                System.err.println("[RegionManager] Failed to update ZooKeeper for migrated table " + tableName + " to region " + leastRegionName);
-            }else{
-                System.out.println("[RegionManager] Update ZooKeeper for migrated table " + tableName + " to region " + leastRegionName + " successfully updated.");
-            }
+            zooKeeperManager.addTable(leastRegionName, new TableInform(tableName, tableLoad));
         }
 
         sortAndUpdate();
