@@ -6,15 +6,14 @@
  */
 package master;
 
+import master.Master.RegionServerHandler;
+import master.Master.RegionServerListenerThread;
 import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
 import zookeeper.ZooKeeperUtils;
 
 import java.util.*;
 import java.util.stream.Collectors;
-
-import master.Master.RegionServerListenerThread; // To access handlers
-import master.Master.RegionServerHandler;      // The handler itself
 
 public class RegionManager {
     public static ZooKeeperManager zooKeeperManager;
@@ -441,7 +440,6 @@ public class RegionManager {
                 }
             }
 
-
             Integer currentLargestLoad = regionsLoad.get(largestRegionName);
             Integer idealLoadToMove = Math.max(0, Math.min(avgLoad - addRegionLoadSum, currentLargestLoad - avgLoad));
 
@@ -464,20 +462,18 @@ public class RegionManager {
 
             System.out.println("[RegionManager] Selected table '" + tableNameToMove + "' (load " + tableLoadToMove + ") from " + largestRegionName + " to migrate to " + addRegionName);
 
-            // TODO: 这里写迁移逻辑，把表从largestRegion迁到targetRegion
-
             boolean migrateCommandSent = sendMigrateTableCommand(largestRegionName, addRegionName, tableNameToMove);
             if (migrateCommandSent) {
                 System.out.println("[RegionManager] Migration command sent for table " + tableNameToMove);
-                //处理表迁出的region server
-                regionsInfo.get(largestRegionName).remove(tableNameToMove);
-                //处理表迁入的region server
-                addTablesInfo.put(tableNameToMove, tableLoadToMove);
-                addRegionLoadSum += tableLoadToMove;
             } else {
                 System.err.println("[RegionManager] Failed to send migration command for table " + tableNameToMove + ". Stopping balancing for now.");
-                break;
             }
+            //处理表迁出的region server
+            regionsInfo.get(largestRegionName).remove(tableNameToMove);
+            //处理表迁入的region server
+            addTablesInfo.put(tableNameToMove, tableLoadToMove);
+            addRegionLoadSum += tableLoadToMove;
+            zooKeeperManager.addTable(addRegionName, new TableInform(tableNameToMove, tableLoadToMove));
         }
         regionsInfo.put(addRegionName, addTablesInfo);
         sortAndUpdate();
@@ -504,6 +500,7 @@ public class RegionManager {
             return ResType.DROP_REGION_FAILURE;
         }
         for (Map.Entry<String, Integer> tableEntry : delTablesInfo.entrySet()) {
+            sortAndUpdate();
             String tableName = tableEntry.getKey();
             Integer tableLoad = tableEntry.getValue();
             String leastRegionName = getLeastRegionName(tableName); //防止同一region server存储了母本和副本
@@ -516,24 +513,23 @@ public class RegionManager {
             if (!regionsInfo.containsKey(leastRegionName)) {
                 regionsInfo.put(leastRegionName, new LinkedHashMap<>());
             }
-            regionsInfo.get(leastRegionName).put(tableName, tableLoad);
+
+            boolean migrateCommandSent = sendMigrateTableCommand(delRegionName, leastRegionName, tableName);
+            if (migrateCommandSent) {
+                System.out.println("[RegionManager] Migration command sent for table " + tableName);
+            } else {
+                System.err.println("[RegionManager] Failed to send migration command for table " + tableName + ". Stopping balancing for now.");
+            }
+
+            Map<String,Integer> tablesInfo = regionsInfo.get(leastRegionName);
+            tablesInfo.put(tableName, tableLoad);
+            regionsInfo.put(leastRegionName, tablesInfo);
 
             boolean zkSuccess = zooKeeperManager.addTable(leastRegionName, new TableInform(tableName, tableLoad));
             if (!zkSuccess) {
                 System.err.println("[RegionManager] Failed to update ZooKeeper for migrated table " + tableName + " to region " + leastRegionName);
-                if (regionsInfo.containsKey(leastRegionName)) {
-                    regionsInfo.get(leastRegionName).remove(tableName);
-                }
-                continue;
-            }
-            String masterTable = tableName.endsWith("_slave") ? tableName.substring(0,tableName.length()-6) : tableName;
-            String slaveTable = masterTable + "_slave";
-            if (findTable(slaveTable) != ResType.FIND_SUCCESS && tableName.equals(masterTable)) {
-                System.err.println("[RegionManager] WARNING: Master table '" + tableName + "' from deleted region " + delRegionName + " has no available slave. Data must be restored from backup to region " + leastRegionName);
-            } else if (findTable(masterTable) != ResType.FIND_SUCCESS && tableName.equals(slaveTable)) {
-                System.err.println("[RegionManager] WARNING: Slave table '" + tableName + "' from deleted region " + delRegionName + " has no available master. Data must be restored from backup to region " + leastRegionName);
-            } else {
-                System.out.println("[RegionManager] Table '" + tableName + "' assigned to region " + leastRegionName + ". Replication/recovery should handle data restoration if needed.");
+            }else{
+                System.out.println("[RegionManager] Update ZooKeeper for migrated table " + tableName + " to region " + leastRegionName + " successfully updated.");
             }
         }
 
