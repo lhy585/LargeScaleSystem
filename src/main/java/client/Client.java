@@ -10,8 +10,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
+import static master.RegionManager.MASTER_IP;
+
 public class Client {
-    public static String masterIp = "127.0.0.1";
+    public static String masterIp = MASTER_IP;//TODO:ip
     public static int masterPort = 5000;
     public static Map<String, String> map = new HashMap<>();
 
@@ -130,7 +132,7 @@ public class Client {
                                         System.out.print("-");
                                         System.out.print("+");
                                     }
-                                    System.out.println("");
+                                    System.out.println();
                                     //
                                     System.out.print("|");
                                     for(int j=0;j<count.length;j++){
@@ -142,7 +144,7 @@ public class Client {
                                         System.out.print(" ");
                                         System.out.print("|");
                                     }
-                                    System.out.println("");
+                                    System.out.println();
                                 }
                                 System.out.print("+");
                                 for(int j=0;j<count.length;j++){
@@ -153,7 +155,7 @@ public class Client {
                                     System.out.print("-");
                                     System.out.print("+");
                                 }
-                                System.out.println("");
+                                System.out.println();
                                 if (!dataReceived) {
                                     System.out.println("(No data rows received or connection closed prematurely)");
                                 }
@@ -258,7 +260,7 @@ public class Client {
                                             System.out.print("-");
                                             System.out.print("+");
                                         }
-                                        System.out.println("");
+                                        System.out.println();
                                         //
                                         System.out.print("|");
                                         for(int j=0;j<count.length;j++){
@@ -270,7 +272,7 @@ public class Client {
                                             System.out.print(" ");
                                             System.out.print("|");
                                         }
-                                        System.out.println("");
+                                        System.out.println();
                                     }
                                     System.out.print("+");
                                     for(int j=0;j<count.length;j++){
@@ -281,7 +283,7 @@ public class Client {
                                         System.out.print("-");
                                         System.out.print("+");
                                     }
-                                    System.out.println("");
+                                    System.out.println();
                                     if (!dataReceived)
                                         System.out.println("(No data rows received or connection closed prematurely)");
                                     System.out.println("--- End of Response ---");

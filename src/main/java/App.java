@@ -1,15 +1,13 @@
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.zookeeper.server.NIOServerCnxnFactory;
-import org.apache.zookeeper.server.ZooKeeperServer;
-import zookeeper.*;
+import zookeeper.TableInform;
+import zookeeper.ZooKeeperManager;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
 public class App {
     public static void main(String [] args){
         try{
+
 //            System.out.println(zookeeper.getData("/lss/master/ip"));
             TableInform tableInform=new TableInform("table1",0);
             TableInform tableInform2=new TableInform("table2",0);

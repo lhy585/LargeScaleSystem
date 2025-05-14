@@ -1,18 +1,16 @@
 package zookeeper;
 
+import master.RegionManager;
+import master.ResType;
+import org.apache.zookeeper.*;
+import org.apache.zookeeper.Watcher.Event.KeeperState;
+import org.apache.zookeeper.ZooDefs.Ids;
+import org.apache.zookeeper.data.Stat;
+
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
-import master.RegionManager;
-import master.ResType;
-import org.apache.zookeeper.CreateMode;
-import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.WatchedEvent;
-import org.apache.zookeeper.Watcher;
-import org.apache.zookeeper.Watcher.Event.KeeperState;
-import org.apache.zookeeper.ZooDefs.Ids;
-import org.apache.zookeeper.ZooKeeper;
-import org.apache.zookeeper.data.Stat;
+import static master.RegionManager.MASTER_IP;
 
 public class ZooKeeperUtils implements Watcher {
 
@@ -21,7 +19,7 @@ public class ZooKeeperUtils implements Watcher {
 	 * 超时时间
 	 */
 	private static final int SESSION_TIME_OUT = 2000; // 建议适当调高，例如 5000ms
-	private CountDownLatch countDownLatch = new CountDownLatch(1);
+	private final CountDownLatch countDownLatch = new CountDownLatch(1);
 
 	// 构造函数等保持不变...
 	public ZooKeeperUtils(String host) {
@@ -34,7 +32,7 @@ public class ZooKeeperUtils implements Watcher {
 	public ZooKeeperUtils() {
 		try {
 			// 确保这里连接的是正确的 ZK 地址
-			connectZookeeper("127.0.0.1:2181"); // 或者从配置读取
+			connectZookeeper(MASTER_IP + ":2181"); // 或者从配置读取
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
