@@ -18,7 +18,7 @@ public class ZooKeeperUtils implements Watcher {
 	/**
 	 * 超时时间
 	 */
-	private static final int SESSION_TIME_OUT = 2000; // 建议适当调高，例如 5000ms
+	private static final int SESSION_TIME_OUT = 20000; // 建议适当调高，例如 5000ms
 	private final CountDownLatch countDownLatch = new CountDownLatch(1);
 
 	// 构造函数等保持不变...
@@ -51,12 +51,13 @@ public class ZooKeeperUtils implements Watcher {
 				this.setWatch(event.getPath());
 				System.out.println("set watch at "+event.getPath());
 				List<String> regions = getChildren(event.getPath());
+				ResType res = RegionManager.addRegion(regions);
 				for(int i=0;i<regions.size();i++){
 					System.out.println("set watch path is "+event.getPath()+"/"+regions.get(i)+"/exist");
 					setWatch(event.getPath()+"/"+regions.get(i)+"/exist");
 					setWatch(event.getPath()+"/"+regions.get(i)+"/data");
 				}
-				ResType res = RegionManager.addRegion(regions);
+
 				switch (res){
 					case ADD_REGION_ALREADY_EXISTS:
 						System.out.println("Add region already exists.");

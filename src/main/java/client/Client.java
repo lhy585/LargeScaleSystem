@@ -78,20 +78,20 @@ public class Client {
 
                             //TODO: 与regionserver通信
                             String[] parts = regionServerAddress.split(":");
-                            if (parts.length != 2) {
-                                System.err.println("Invalid RegionServer address format in cache: " + regionServerAddress);
-                                map.remove(table_name);
-                                continue;
-                            }
+//                            if (parts.length != 2) {
+//                                System.err.println("Invalid RegionServer address format in cache: " + regionServerAddress);
+//                                map.remove(table_name);
+//                                continue;
+//                            }
                             String rsIp = parts[0];
-                            int rsPort;
-                            try {
-                                rsPort = Integer.parseInt(parts[1]);
-                            } catch (NumberFormatException e) {
-                                System.err.println("Invalid RegionServer port in cache: " + parts[1]);
-                                map.remove(table_name);
-                                continue;
-                            }
+                            int rsPort=4001;
+//                            try {
+//                                rsPort = Integer.parseInt(parts[1]);
+//                            } catch (NumberFormatException e) {
+//                                System.err.println("Invalid RegionServer port in cache: " + parts[1]);
+//                                map.remove(table_name);
+//                                continue;
+//                            }
 
                             System.out.println("Connecting to RegionServer " + rsIp + ":" + rsPort + " for SELECT...");
                             try (Socket rsSocket = new Socket(rsIp, 4001);
@@ -206,20 +206,20 @@ public class Client {
                                 System.out.println("Executing SQL on RegionServer: " + finalSqlForRs);
 
                                 String[] parts = regionServerAddress.split(":");
-                                if (parts.length != 2) {
-                                    System.err.println("Invalid RegionServer address format from Master: " + regionServerAddress);
-                                    map.remove(table_name);
-                                    continue;
-                                }
+//                                if (parts.length != 2) {
+//                                    System.err.println("Invalid RegionServer address format from Master: " + regionServerAddress);
+//                                    map.remove(table_name);
+//                                    continue;
+//                                }
                                 String rsIp = parts[0];
-                                int rsPort;
-                                try {
-                                    rsPort = Integer.parseInt(parts[1]);
-                                } catch (NumberFormatException e) {
-                                    System.err.println("Invalid RegionServer port from Master: " + parts[1]);
-                                    map.remove(table_name);
-                                    continue;
-                                }
+                                int rsPort=4001;
+//                                try {
+//                                    rsPort = Integer.parseInt(parts[1]);
+//                                } catch (NumberFormatException e) {
+//                                    System.err.println("Invalid RegionServer port from Master: " + parts[1]);
+//                                    map.remove(table_name);
+//                                    continue;
+//                                }
 
                                 System.out.println("Connecting to RegionServer " + rsIp + ":" + rsPort + " for SELECT...");
                                 try (Socket rsSocket = new Socket(rsIp, rsPort);

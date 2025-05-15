@@ -408,7 +408,7 @@ public class RegionManager {
             res = new ArrayList<>();
         }
 
-        Iterator<Map.Entry<String, Map<String, Integer>>> iterator = regionsInfo.entrySet().iterator();
+        Iterator<Map.Entry<String, Integer>> iterator = regionsLoad.entrySet().iterator();
 
         if (iterator.hasNext()) {
             String masterRegionName = iterator.next().getKey(); //第一个region server用于存放master
