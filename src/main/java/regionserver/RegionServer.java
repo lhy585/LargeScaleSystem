@@ -148,6 +148,7 @@ public class RegionServer {
         try {
             ServerSocketFactory serverSocketFactory = ServerSocketFactory.getDefault();
             serverSocket = serverSocketFactory.createServerSocket(Integer.parseInt(clientListenPort));
+//            serverSocket = new ServerSocket(Integer.parseInt(clientListenPort));
             System.out.println("[RegionServer] 服务器 Socket 已创建, 监听端口: " + clientListenPort);
         } catch (IOException e) {
             System.err.println("[RegionServer] 致命错误: 在端口 " + clientListenPort + " 创建服务器 Socket 时出错: " + e.getMessage());

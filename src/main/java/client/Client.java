@@ -92,7 +92,7 @@ public class Client {
                             }
 
                             System.out.println("Connecting to RegionServer " + rsIp + ":" + rsPort + " for SELECT...");
-                            try (Socket rsSocket = new Socket(rsIp, rsPort);
+                            try (Socket rsSocket = new Socket(rsIp, 4001);
                                  PrintWriter rsOut = new PrintWriter(new OutputStreamWriter(rsSocket.getOutputStream(), StandardCharsets.UTF_8), true);
                                  BufferedReader rsIn = new BufferedReader(new InputStreamReader(rsSocket.getInputStream(), StandardCharsets.UTF_8))) {
                                 rsOut.println(sql);
