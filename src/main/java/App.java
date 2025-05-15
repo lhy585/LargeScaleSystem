@@ -4,33 +4,14 @@ import org.apache.zookeeper.server.ZooKeeperServer;
 import zookeeper.*;
 
 import java.io.File;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
-
-import static regionserver.RegionServer.getIPAddress;
 
 public class App {
     public static void main(String [] args){
         try{
+
 //            System.out.println(zookeeper.getData("/lss/master/ip"));
-            Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
-            while (networkInterfaces.hasMoreElements()) {
-                NetworkInterface networkInterface = networkInterfaces.nextElement();
-                // 过滤掉虚拟网络接口（如WSL）
-                if (!networkInterface.isLoopback() && !networkInterface.isVirtual() && networkInterface.getHardwareAddress() != null) {
-                    Enumeration<InetAddress> inetAddresses = networkInterface.getInetAddresses();
-                    while (inetAddresses.hasMoreElements()) {
-                        InetAddress inetAddress = inetAddresses.nextElement();
-                        // 过滤掉IPv6地址和本地回环地址
-                        if (inetAddress instanceof java.net.Inet4Address && !inetAddress.isLoopbackAddress()) {
-                            System.out.println("物理网卡IPv4地址: " + inetAddress.getHostAddress());
-                        }
-                    }
-                }
-            }
             TableInform tableInform=new TableInform("table1",0);
             TableInform tableInform2=new TableInform("table2",0);
             List<TableInform> tableInforms=new ArrayList<>();

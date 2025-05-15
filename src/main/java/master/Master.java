@@ -1,17 +1,19 @@
 package master;
 
-import socket.SqlSocket;
 import socket.ParsedSqlResult;
+import socket.SqlSocket;
 import socket.SqlType;
+import zookeeper.ZooKeeperManager;
 
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets; // 确保字符编码一致性
-import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-
-import zookeeper.ZooKeeperManager;
 
 public class Master {
     //Master主程序：打开服务器，监听客户端并分配线程连接
@@ -125,11 +127,6 @@ public class Master {
         public Set<String> getAllRegionServerIds() {
             return regionHandlers.keySet();
         }
-
-//         public Socket getRegionServerSocket(String zkIp) {
-//             RegionServerHandler handler = regionHandlers.get(zkIp);
-//             return handler != null ? handler.getSocket() : null;
-//         }
     }
 
     // 处理Client连接
@@ -400,7 +397,7 @@ public class Master {
 
             // 等待 RegionServer 的注册消息
             String registerMsg = in.readLine();
-            if (registerMsg == null || !"REGISTER_REGION_SERVER".equals(registerMsg)) {
+            if (!"REGISTER_REGION_SERVER".equals(registerMsg)) {
                 System.err.println("[Master] Invalid or missing registration command from " + socket.getRemoteSocketAddress());
                 return null;
             }

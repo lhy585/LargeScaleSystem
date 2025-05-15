@@ -1,13 +1,15 @@
 package zookeeper;
 
 import org.apache.zookeeper.CreateMode;
-import org.apache.zookeeper.KeeperException; // Import CreateMode
+import org.apache.zookeeper.KeeperException;
 
 import java.util.List;
 
+import static master.RegionManager.MASTER_IP;
+
 public class ZooKeeperManager {
     public ZooKeeperUtils zooKeeperUtils;
-    public String address = "10.162.132.242"; // 最好从配置文件读取
+    public String address = MASTER_IP; // 最好从配置文件读取 TODO:ip
     public String port = "2181";    // 最好从配置文件读取
 
     public ZooKeeperManager() {

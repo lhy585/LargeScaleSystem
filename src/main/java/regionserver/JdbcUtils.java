@@ -2,6 +2,8 @@ package regionserver;
 import java.io.IOException;
 import java.sql.*;
 
+import static regionserver.RegionServer.DBpwd;
+
 public class JdbcUtils {
 
     private static final String driver;
@@ -14,7 +16,7 @@ public class JdbcUtils {
         url = "jdbc:mysql://localhost:3306/?characterEncoding=utf-8&"
                 + "useSSL=false&serverTimezone=UTC&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true";
         user = "root";
-        pwd = "429915";
+        pwd = DBpwd;
     }
 
     /**

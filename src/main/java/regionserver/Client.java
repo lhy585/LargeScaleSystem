@@ -2,10 +2,9 @@ package regionserver;
 
 import java.io.*;
 import java.net.Socket;
-import java.net.InetAddress; // 未直接使用，可以考虑移除
 import java.nio.charset.StandardCharsets;
 
-import master.ResType; // 假设 ResType 在 master 包中并且是可访问的
+import static master.RegionManager.MASTER_IP;
 
 /**
  * RegionServer 的主进程.
@@ -14,7 +13,7 @@ import master.ResType; // 假设 ResType 在 master 包中并且是可访问的
  * 3. 连接到 Master (端口 5001) 进行注册并接收命令 (DDL/DML).
  */
 public class Client {
-    private static final String MASTER_HOST = "127.0.0.1"; // Master 的主机地址
+    private static final String MASTER_HOST = MASTER_IP; // Master 的主机地址
     // Master 监听 RegionServer 连接的端口
     private static final int MASTER_REGION_SERVER_PORT = 5001;
 

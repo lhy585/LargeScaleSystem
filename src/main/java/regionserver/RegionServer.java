@@ -1,19 +1,21 @@
 package regionserver;
 
+import zookeeper.TableInform;
+import zookeeper.ZooKeeperManager;
+
+import javax.net.ServerSocketFactory;
 import java.io.IOException;
 import java.net.*;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
-import java.util.concurrent.*;
-
-import javax.net.ServerSocketFactory;
-
-// import org.apache.zookeeper.KeeperException; // 不再直接使用 ZK 异常
-import zookeeper.TableInform;
-import zookeeper.ZooKeeperManager;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class RegionServer {
     public static String ip;
@@ -33,12 +35,13 @@ public class RegionServer {
     public static volatile boolean quitSignal = false; // 退出信号
     public static List<TableInform> tables; // 当前 RegionServer 负责的表信息 (可能由 Master/ZK 管理更佳)
 
+    public static String DBpwd = "123456";
     public static String serverPath; // 此服务器在 ZK 中的路径
 
     static {
         ip = getIPAddress();
         mysqlUser = "root"; // 示例用户名
-        mysqlPwd = "429915"; // 示例密码 (生产环境应使用安全方式配置)
+        mysqlPwd = DBpwd; // 示例密码 (生产环境应使用安全方式配置)
         tables = new ArrayList<>(); // 初始化列表
     }
 
@@ -212,26 +215,25 @@ public class RegionServer {
      */
     public static String getIPAddress() {
         try {
-            NetworkInterface networkInterface = NetworkInterface.networkInterfaces()
-                    .filter(ni -> {
-                        try {
-                            return ni.isUp() && !ni.isLoopback() && !ni.isVirtual();
-                        } catch (SocketException e) {
-                            return false;
+            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
+            while (nets.hasMoreElements()) {
+                NetworkInterface netint = nets.nextElement();
+                // 排除掉回环接口和未启用的接口
+                if (!netint.isUp() || netint.isLoopback() || netint.isVirtual()) {
+                    continue;
+                }
+                Enumeration<InetAddress> inetAddresses = netint.getInetAddresses();
+                while (inetAddresses.hasMoreElements()) {
+                    InetAddress addr = inetAddresses.nextElement();
+                    if (addr instanceof Inet4Address) {
+                        String ip = addr.getHostAddress();
+                        if (ip.startsWith("10.")) {
+                            return ip;
                         }
-                    })
-                    .findFirst()
-                    .orElse(null);
-            if (networkInterface != null) {
-                InetAddress inetAddress = networkInterface.getInterfaceAddresses().stream()
-                        .map(InterfaceAddress::getAddress)
-                        .filter(addr -> addr instanceof java.net.Inet4Address)
-                        .findFirst()
-                        .orElse(InetAddress.getLocalHost()); // Fallback if no IPv4 found on preferred interface
-                return inetAddress.getHostAddress();
-            } else {
-                return InetAddress.getLocalHost().getHostAddress();
+                    }
+                }
             }
+            return "127.0.0.1";
         } catch (Exception e) {
             System.err.println("[RegionServer] Error getting IP address: " + e.getMessage() + ". Falling back to 127.0.0.1");
             return "127.0.0.1"; // Fallback IP
