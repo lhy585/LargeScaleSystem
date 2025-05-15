@@ -28,7 +28,7 @@ public class RegionManager {
 
     public static List<String> toBeCopiedTable = null;
 
-    public static Integer loadsSum = 0, loadsAvg = 0;
+    public static Integer loadsSum = 0;
 
     public static RegionServerListenerThread regionServerListener = null;
 
@@ -142,7 +142,6 @@ public class RegionManager {
         regionsInfo = sortedRegionsInfo;
         regionsLoad = getRegionsLoad();
         loadsSum = getLoadsSum();
-        loadsAvg = loadsSum/regionsInfo.size();
     }
 
     private static void regularRecoverData(){
@@ -342,7 +341,7 @@ public class RegionManager {
     }
 
     /**
-     * 为某一个被删除的region server善后
+     * 为某一个掉线的region server善后
      * 将该region server上的数据表重分配到其他region server上
      */
     public static ResType delRegion(String delRegionName) {
@@ -499,6 +498,12 @@ public class RegionManager {
         return new SelectInfo(true, regionName, retSql);
     }
 
+    private static boolean checkAndRecoverData(String tableName){
+        List<String> tableNames = new ArrayList<>();
+        tableNames.add(tableName);
+        return checkAndRecoverData(tableNames);
+    }
+
     private static boolean checkAndRecoverData(List<String> tableNames) {
         for(String tableName : tableNames){
             String slaveTableName = tableName + "_slave";
@@ -587,6 +592,7 @@ public class RegionManager {
     }
 
     public static List<ResType> accTableMasterAndSlave(String tableName, String sql) {
+        checkAndRecoverData(tableName);
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -629,6 +635,7 @@ public class RegionManager {
     }
 
     public static List<ResType> decTableMasterAndSlave(String tableName, String sql) {
+        checkAndRecoverData(tableName);
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -671,6 +678,7 @@ public class RegionManager {
     }
 
     public static List<ResType> updateTableMasterAndSlave(String tableName, String sql) {
+        checkAndRecoverData(tableName);
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -709,6 +717,7 @@ public class RegionManager {
     }
 
     public static List<ResType> alterTableMasterAndSlave(String tableName, String sql) {
+        checkAndRecoverData(tableName);
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
@@ -762,6 +771,7 @@ public class RegionManager {
     }
 
     public static List<ResType> truncateTableMasterAndSlave(String tableName, String sql) {
+        checkAndRecoverData(tableName);
         List<ResType> checkList = findTableMasterAndSlave(tableName);
         List<ResType> res = new ArrayList<>();
         if(checkList.get(0) == ResType.FIND_TABLE_NO_EXISTS){
