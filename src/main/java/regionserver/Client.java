@@ -189,8 +189,10 @@ public class Client {
             } else if (trimmedCommand.startsWith("truncate")) {
                 commandType = "TRUNCATE";
                 success = ServerClient.executeCmd(sqlCommand);
-            }
-            else {
+            } else if(trimmedCommand.startsWith("rename")){
+                commandType = "RENAME";
+                success = ServerClient.executeCmd(sqlCommand);
+            } else {
                 System.err.println("[RegionServer Process] 收到无法识别的命令结构: " + sqlCommand);
                 commandType = "EXECUTE_UNKNOWN";
                 success = ServerClient.executeCmd(sqlCommand); // 尝试执行

@@ -18,7 +18,7 @@ public class ZooKeeperUtils implements Watcher {
 	/**
 	 * 超时时间
 	 */
-	private static final int SESSION_TIME_OUT = 20000000; // 建议适当调高，例如 5000ms
+	private static final int SESSION_TIME_OUT = 200000; // 建议适当调高，例如 5000ms
 	private final CountDownLatch countDownLatch = new CountDownLatch(1);
 
 	// 构造函数等保持不变...
@@ -50,6 +50,7 @@ public class ZooKeeperUtils implements Watcher {
 			try{
 
 				List<String> regions = getChildren(event.getPath());
+				Thread.sleep(2000);
 				ResType res = RegionManager.addRegion(regions);
 				this.setWatch(event.getPath());
 				System.out.println("set watch at "+event.getPath());
