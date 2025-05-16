@@ -143,7 +143,6 @@ public class RegionServer {
         }
     }
 
-
     /**
      * 创建用于监听直接客户端连接的 ServerSocket, 并初始化用于处理这些连接的线程池.
      */

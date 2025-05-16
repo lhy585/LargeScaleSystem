@@ -1,7 +1,8 @@
 package regionserver;
 
-import java.sql.*;
-import java.util.Objects;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 
 // Removed ZooKeeper imports
 
@@ -47,7 +48,7 @@ public class ServerClient {
      * @return true if execution succeeds, false otherwise.
      */
     public static boolean dropTable(String tableName) {
-        String sqlCmd = "DROP TABLE IF EXISTS `" + tableName + "`"; // Use backticks for safety
+        String sqlCmd = "DROP TABLE IF EXISTS " + tableName ; // Use backticks for safety
         System.out.println("[ServerClient] Executing DROP: " + sqlCmd);
         return executeCmd(sqlCmd);
     }

@@ -242,6 +242,7 @@ public class ZooKeeperManager {
             return false;
         }
     }
+
     public boolean setMasterData(String ip, String new_data){
         try{
             String path="/lss/region_server/"+ip+"/data";
@@ -280,7 +281,6 @@ public class ZooKeeperManager {
 
     /**
      * 从指定的 RegionServer 的 ZooKeeper 记录中删除一个表及其元数据。
-     *
      * @param regionIp 要从中删除表的 RegionServer 的 IP 地址。
      * @param tableName 要删除的表名。
      * @return 如果成功删除或节点本就不存在，则返回 true；否则返回 false。
@@ -318,23 +318,6 @@ public class ZooKeeperManager {
         } catch (Exception e) {
             e.printStackTrace();
             return false;
-        }
-    }
-
-    public void setData(String serverPath, String newValue) {
-        try {
-            zooKeeperUtils.setData(serverPath, newValue);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public List<String> getChildren(String tablesPath) {
-        try {
-            return zooKeeperUtils.getChildren(tablesPath);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
         }
     }
 }

@@ -18,7 +18,7 @@ public class ZooKeeperUtils implements Watcher {
 	/**
 	 * 超时时间
 	 */
-	private static final int SESSION_TIME_OUT = 20000; // 建议适当调高，例如 5000ms
+	private static final int SESSION_TIME_OUT = 20000000; // 建议适当调高，例如 5000ms
 	private final CountDownLatch countDownLatch = new CountDownLatch(1);
 
 	// 构造函数等保持不变...
@@ -48,10 +48,12 @@ public class ZooKeeperUtils implements Watcher {
 		if(event.getType() == Event.EventType.NodeChildrenChanged){
 			System.out.println("Detected a client has created: " + event.getPath());
 			try{
-				this.setWatch(event.getPath());
-				System.out.println("set watch at "+event.getPath());
+
 				List<String> regions = getChildren(event.getPath());
 				ResType res = RegionManager.addRegion(regions);
+				this.setWatch(event.getPath());
+				System.out.println("set watch at "+event.getPath());
+				Thread.sleep(2000);
 				for(int i=0;i<regions.size();i++){
 					System.out.println("set watch path is "+event.getPath()+"/"+regions.get(i)+"/exist");
 					setWatch(event.getPath()+"/"+regions.get(i)+"/exist");
@@ -233,6 +235,10 @@ public class ZooKeeperUtils implements Watcher {
 	}
 	public List<String> getChildren(String path) throws KeeperException, InterruptedException{
 		System.out.println("call ZooKeeperUtils.getchildren " + path);
+		if(!nodeExists(path)){
+			System.out.println("cannot call ZooKeeperUtils.getchildren " + path);
+			return null;
+		}
 		List<String> children = zookeeper.getChildren(path, false);
 		return children;
 	}

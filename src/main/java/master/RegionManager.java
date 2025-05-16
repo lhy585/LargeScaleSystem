@@ -8,10 +8,16 @@ package master;
 
 import master.Master.RegionServerHandler;
 import master.Master.RegionServerListenerThread;
+import regionserver.JdbcUtils;
+import regionserver.RegionServer;
 import zookeeper.TableInform;
 import zookeeper.ZooKeeperManager;
 import zookeeper.ZooKeeperUtils;
 
+import java.io.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -32,7 +38,7 @@ public class RegionManager {
 
     public static RegionServerListenerThread regionServerListener = null;
 
-    public static String MASTER_IP = "127.0.0.1";
+    public static String MASTER_IP = "10.193.103.92";
     public static int MAX_LOOP_NUM = 50;
     //信息同步，损毁迁移等
 
@@ -167,7 +173,7 @@ public class RegionManager {
         String templateRegionName = zooKeeperManager.getRegionServer(templateTableName);
         Integer load = regionsInfo.get(templateRegionName).get(templateTableName);
         //新建
-        String addRegionName = getLeastRegionName(templateTableName);
+        String addRegionName = getLeastRegionName(templateTableName, false);
         if(addRegionName == null){
             return false;
         }
@@ -175,7 +181,7 @@ public class RegionManager {
         //通知ZooKeeper
         zooKeeperManager.addTable(addRegionName, new TableInform(addTableName,load));
         sortAndUpdate();
-        sendCopyTableCommand(templateRegionName,addRegionName,templateTableName,addTableName);
+        copyTable(templateRegionName,addRegionName,templateTableName,addTableName);
         return true;
     }
 
@@ -219,8 +225,14 @@ public class RegionManager {
      * @return 如果有节点，则返回最小节点对应的名字；如果没有节点，返回null
      * --测试通过--
      */
-    public static String getLeastRegionName(String tableName) {
-        sortAndUpdate();
+    public static String getLeastRegionName(String tableName){
+        return getLeastRegionName(tableName, true);
+    }
+
+    public static String getLeastRegionName(String tableName, boolean isUpdate) {
+        if(isUpdate){
+            sortAndUpdate();
+        }
         String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
         String slaveTableName = masterTableName + "_slave";
 
@@ -291,6 +303,9 @@ public class RegionManager {
      * 将其他region server上的数据表匀给该region server上
      */
     public static ResType addRegion(List<String> nowRegionNames) {
+        if(nowRegionNames.size()==regionsInfo.size()){
+            return ResType.ADD_REGION_ALREADY_EXISTS;
+        }
         String addRegionName = null;
         for (String regionName : nowRegionNames) {
             if (!regionsInfo.containsKey(regionName)) {
@@ -325,7 +340,7 @@ public class RegionManager {
             Integer tableLoadToMove = largestTableInfo.get(tableNameToMove);
 
             // 把表从largestRegion迁到targetRegion
-            sendMigrateTableCommand(largestRegionName,addRegionName,tableNameToMove);
+            migrateTable(largestRegionName,addRegionName,tableNameToMove);
             //处理表迁出的region server
             largerRegionTables.remove(tableNameToMove);
             regionsInfo.put(largestRegionName, largerRegionTables);
@@ -353,15 +368,19 @@ public class RegionManager {
         for(String tableName : delTablesInfo.keySet()){
             sortAndUpdate();
             String leastRegionName = getLeastRegionName(tableName);//防止同一region server存储了母本和副本
+            if(leastRegionName==null){
+                toBeCopiedTable.add(tableName);
+                continue;
+            }
             Map<String, Integer> leastTablesInfo = regionsInfo.get(leastRegionName);
             Integer tableLoad = delTablesInfo.get(tableName);
             leastTablesInfo.put(tableName, tableLoad);
             regionsInfo.put(leastRegionName, leastTablesInfo);
 
             List<String> backInfos = getBackRegion(tableName);
-            String backRegionName = backInfos.get(0);
-            String backTableName = backInfos.get(1);
-            sendCopyTableCommand(backRegionName,leastRegionName,backTableName,tableName);
+            String backTableName = backInfos.get(0);
+            String backRegionName = backInfos.get(1);
+            copyTable(backRegionName,leastRegionName,backTableName,tableName);
             zooKeeperManager.addTable(leastRegionName, new TableInform(tableName,tableLoad));
         }
         sortAndUpdate();
@@ -413,7 +432,9 @@ public class RegionManager {
         if (iterator.hasNext()) {
             String masterRegionName = iterator.next().getKey(); //第一个region server用于存放master
             res.add(createTable(masterRegionName, tableName, sql));
+            System.out.println("[RegionManager] create table "+tableName+" at region "+masterRegionName);
         }else{
+            System.out.println("[RegionManager] fail create master_table");
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
         String slaveTableName = tableName + "_slave";
@@ -421,7 +442,9 @@ public class RegionManager {
             String slaveRegionName = iterator.next().getKey(); //第二个region server用于存放slave
             sql = sql.replace(tableName, slaveTableName);
             res.add(createTable(slaveRegionName, slaveTableName, sql));
+            System.out.println("[RegionManager] create table "+slaveTableName+" at region "+slaveRegionName);
         }else{
+            System.out.println("[RegionManager] fail create slave_table");
             res.add(ResType.CREATE_TABLE_FAILURE);
         }
 
@@ -583,7 +606,7 @@ public class RegionManager {
                     //处理移入表的region
                     tables.put(tableName, load);
                     zooKeeperManager.addTable(regionName, new TableInform(tableName,load));
-                    sendMigrateTableCommand(delRegion,regionName,tableName);
+                    migrateTable(delRegion,regionName,tableName);
                 }
             }
         }
@@ -871,7 +894,7 @@ public class RegionManager {
     /**
      * Sends a command to the target RegionServer instructing it to copy a table from the source.
      * This requires defining a specific command protocol.
-     * Example: "COPY_TABLE <source_host> <source_port> <source_user> <source_pwd> <source_table> <target_table>"
+     * Example: "COPY_TABLE <src_host> <src_port> <src_user> <src_pwd> <table_name> <dst_table> <dst_table> <dst_table>"
      *
      * @param sourceRegionName Name/IP of the source region.
      * @param targetRegionName Name/IP of the target region (where command is sent).
@@ -879,14 +902,25 @@ public class RegionManager {
      * @param targetTableName  Desired table name on the target.
      * @return true if the command was sent successfully.
      */
-    private static boolean sendCopyTableCommand(String sourceRegionName, String targetRegionName, String sourceTableName, String targetTableName) {
+    public static boolean copyTable(String sourceRegionName, String targetRegionName, String sourceTableName, String targetTableName) {
         // 1. Get source connection details from ZK
         String sourceConnectionString = getRegionConnectionString(sourceRegionName, true); // Get MySQL details
         if (sourceConnectionString == null) {
-            System.err.println("[RegionManager] Cannot send COPY command: Failed to get source connection details for " + sourceRegionName);
+            System.err.println("[RegionManager] Cannot COPY: Failed to get source connection details for " + sourceRegionName);
             return false;
+        }else{
+            System.out.println("[RegionManager] src: " + sourceConnectionString);
         }
         String[] sourceDetails = sourceConnectionString.split(","); // ip,port,user,pwd
+
+        String dstConnectionString = getRegionConnectionString(targetRegionName, true); // Get MySQL details
+        if (dstConnectionString == null) {
+            System.err.println("[RegionManager] Cannot COPY: Failed to get source connection details for " + targetRegionName);
+            return false;
+        }else{
+            System.out.println("[RegionManager] dst: " + dstConnectionString);
+        }
+        String[] dstDetails = dstConnectionString.split(","); // ip,port,user,pwd
 
         // 2. Get target handler
         if (regionServerListener == null) {
@@ -900,20 +934,27 @@ public class RegionManager {
         }
 
         // 3. Construct the command (DEFINE YOUR PROTOCOL HERE)
-        // Example: COPY <source_ip> <source_mysql_port> <source_user> <source_pwd> <source_table_name> <target_table_name>
-        String command = String.format("COPY_TABLE %s %s %s %s %s %s",
-                sourceRegionName, // source host IP/name
-                sourceDetails[3], // source mysql port
-                sourceDetails[1], // source mysql user
-                sourceDetails[2], // source mysql password (SECURITY RISK!)
+        // Example: COPY_TABLE <src_ip> <src_port> <src_user> <src_pwd> <source_table_name> <dst_ip> <dst_port> <dst_user> <dst_pwd> <target_table_name>
+        String command = String.format("COPY_TABLE %s %s %s %s %s %s %s %s %s %S",
+                sourceRegionName,
+                sourceDetails[1],
+                sourceDetails[2],
+                sourceDetails[3],
                 sourceTableName,
+                targetRegionName,
+                dstDetails[1],
+                dstDetails[2],
+                dstDetails[3],
                 targetTableName);
 
-        // 4. Send the command
+        // 4. Process the command
         try {
-            System.out.println("[RegionManager] Sending command to target " + targetRegionName + ": " + command.replaceAll(sourceDetails[2], "****")); // Mask password in log
-            targetHandler.forwardCommand(command);
-            // TODO: Wait for response from target RS confirming copy initiated/completed?
+            System.out.println("[RegionManager] Sending command to target " + targetRegionName + ": " + command); // Mask password in log
+            if (handleCopyTableCommand(command)) {
+                System.out.println("[RegionManager] MIGRATE_TABLE_SUCCESS!");
+            } else {
+                System.err.println("[RegionManager] MIGRATE_TABLE_FAILURE.");
+            }
             return true; // Assume send success for now
         } catch (Exception e) {
             System.err.println("[RegionManager] Error sending COPY command to region " + targetRegionName + ": " + e.getMessage());
@@ -922,53 +963,289 @@ public class RegionManager {
     }
 
     /**
+     * 处理 Master 发送的自定义 COPY_TABLE 命令.
+     * 格式: COPY_TABLE <src_host> <src_port> <src_user> <src_pwd> <src_table> <dst_host> <dst_port> <dst_user> <dst_pwd> <dst_table>
+     * @param command 命令字符串
+     * @return 是否成功启动复制过程
+     */
+    private static boolean handleCopyTableCommand(String command) {
+        String prefix = "COPY_TABLE ";
+        if (!command.startsWith(prefix)) {
+            return false;
+        }
+        String[] parts = command.substring(prefix.length()).split("\\s+");
+        if (parts.length != 10) {
+            System.err.println("[RegionServer Process] Invalid COPY_TABLE command format: " + command);
+            return false;
+        }
+        String srcHost = parts[0];
+        String srcPort = parts[1];
+        String srcUser = parts[2];
+        String srcPwd = parts[3];
+        String srcTable = parts[4];
+
+        String dstHost = parts[5];
+        String dstPort = parts[6];
+        String dstUser = parts[7];
+        String dstPwd = parts[8];
+        String dstTable = parts[9];
+
+
+        System.out.println("[RegionServer Process] Received request to copy table " + srcTable
+                + " from " + srcHost + ":" + srcPort + " to local table " + dstTable);
+        boolean copySuccess = copyTableBetweenMySQL(
+                srcHost, srcPort, srcUser, srcPwd, srcTable,
+                dstHost, dstPort, dstUser, dstPwd
+        );
+
+        if (copySuccess) {
+            System.out.println("[RegionServer Process] Table copy initiated successfully for " + dstTable);
+            // 在 ServerMaster.dumpTable 成功后，可以选择性地修改表名（如果需要）
+            if (!srcTable.equals(dstTable)) {
+                System.out.println("[RegionServer Process] Renaming imported table " + srcTable + " to " + dstTable);
+                String renameSql = "RENAME TABLE `" + srcTable + "` TO `" + dstTable + "`;";
+                try {
+                    sendSqlCommandToRegion(dstHost,renameSql); // 使用本地执行
+                    System.out.println("[RegionServer Process] Table renamed successfully.");
+                } catch (Exception e) {
+                    System.err.println("[RegionServer Process] Failed to rename table after copy: " + e.getMessage());
+                    // 即使重命名失败，复制也可能部分成功，但返回 false 表示整个操作未完全成功
+                    return false;
+                }
+            }
+        } else {
+            System.err.println("[RegionServer Process] Table copy initiation failed for " + dstTable);
+        }
+        return copySuccess;
+    }
+    /**
      * Sends a command to initiate table migration. Could involve multiple steps/commands.
      * Example: Tell target to pull, then tell source to drop.
-     *
-     * @param sourceRegionName Name/IP of the source.
-     * @param targetRegionName Name/IP of the target.
-     * @param tableName        Table to migrate.
-     * @return true if the initial command was sent successfully.
+     * @param srcRegionName Name/IP of the source.
+     * @param dstRegionName Name/IP of the target.
+     * @param tableName     Table to migrate.
      */
-    private static boolean sendMigrateTableCommand(String sourceRegionName, String targetRegionName, String tableName) {
-        System.out.println("[RegionManager] 准备发送 MIGRATE_TABLE_FROM_SOURCE 命令给目标 Region " + targetRegionName +
-                " 以迁移表 " + tableName + " 从源 " + sourceRegionName);
+    private static void migrateTable(String srcRegionName, String dstRegionName, String tableName) {
+        System.out.println("[RegionManager] 准备发送 MIGRATE_TABLE_FROM_SOURCE 命令给目标 Region " + dstRegionName +
+                " 以迁移表 " + tableName + " 从源 " + srcRegionName);
 
-        // 1. 从 ZK 获取源 RegionServer 的 MySQL 连接详细信息
-        String sourceDbDetailsString = getRegionConnectionString(sourceRegionName, true); // true 表示获取DB细节
-        if (sourceDbDetailsString == null) {
-            System.err.println("[RegionManager] 无法发送 MIGRATE 命令: 获取源 " + sourceRegionName + " 的DB连接信息失败。");
-            return false;
+        // 1. 从 ZK 获取src/dst RegionServer 的 MySQL 连接详细信息
+        String srcDbDetailsString = getRegionConnectionString(srcRegionName, true); // true 表示获取DB细节
+        if (srcDbDetailsString == null) {
+            System.err.println("[RegionManager] 无法发送 MIGRATE 命令: 获取源 " + srcRegionName + " 的DB连接信息失败。");
+            return;
         }
-        String[] sourceDetails = sourceDbDetailsString.split(","); // 期望格式: host,dbPort,dbUser,dbPwd
-        if (sourceDetails.length < 4) {
-            System.err.println("[RegionManager] 源 " + sourceRegionName + " 的DB连接信息格式不正确: " + sourceDbDetailsString);
-            return false;
+        String[] srcDetails = srcDbDetailsString.split(","); // 期望格式: host,dbPort,dbUser,dbPwd
+        if (srcDetails.length < 4) {
+            System.err.println("[RegionManager] 源 " + srcRegionName + " 的DB连接信息格式不正确: " + srcDbDetailsString);
+            return;
         }
-        // sourceDetails[0] 是 sourceRegionName (IP)
-        // sourceDetails[1] 是 sourceMysqlPort
-        // sourceDetails[2] 是 sourceMysqlUser
-        // sourceDetails[3] 是 sourceMysqlPwd
+        String dstDbDetailsString = getRegionConnectionString(dstRegionName, true); // true 表示获取DB细节
+        if (dstDbDetailsString == null) {
+            System.err.println("[RegionManager] 无法发送 MIGRATE 命令: 目标 " + dstRegionName + " 的DB连接信息失败。");
+            return;
+        }
+        String[] dstDetails = dstDbDetailsString.split(","); // 期望格式: host,dbPort,dbUser,dbPwd
+        if (dstDetails.length < 4) {
+            System.err.println("[RegionManager] 目标 " + dstRegionName + " 的DB连接信息格式不正确: " + dstDbDetailsString);
+            return;
+        }
 
         // 2. 构建 "MIGRATE_TABLE_FROM_SOURCE" 命令
-        // 格式: MIGRATE_TABLE_FROM_SOURCE <source_host_ip> <source_mysql_port> <source_mysql_user> <source_mysql_pwd> <table_name_to_migrate>
-        String command = String.format("MIGRATE_TABLE_FROM_SOURCE %s %s %s %s %s",
-                sourceDetails[0], // sourceRegionName (作为 host_ip)
-                sourceDetails[1], // sourceMysqlPort
-                sourceDetails[2], // sourceMysqlUser
-                sourceDetails[3], // sourceMysqlPwd (安全风险)
-                tableName);
+        // 格式: MIGRATE_TABLE_FROM_SOURCE <src_ip> <src_port> <src_user> <src_pwd> <table_name> <dst_ip> <dst_port> <dst_user> <dst_pwd>
+        String command = String.format("MIGRATE_TABLE_FROM_SOURCE %s %s %s %s %s %s %s %s %s",
+                srcDetails[0], // sourceRegionName (作为 host_ip)
+                srcDetails[1], // sourceMysqlPort
+                srcDetails[2], // sourceMysqlUser
+                srcDetails[3], // sourceMysqlPwd (安全风险)
+                tableName,
+                dstDetails[0],
+                dstDetails[1],
+                dstDetails[2],
+                dstDetails[3]);
 
-        // 3. 将此命令发送给 *目标* RegionServer (targetRegionName)
-        boolean commandSent = sendSqlCommandToRegion(targetRegionName, command); // sendSqlCommandToRegion 已包含重试
-
-        if (commandSent) {
-            System.out.println("[RegionManager] MIGRATE_TABLE_FROM_SOURCE 命令已成功发送给 Region " + targetRegionName + "。");
-            // 注意: 这只表示命令已发送。实际迁移成功与否需要目标RegionServer反馈。
+        if (handleFullMigrateCommand(command)) {
+            System.out.println("[RegionManager] MIGRATE_TABLE_SUCCESS!");
         } else {
-            System.err.println("[RegionManager] MIGRATE_TABLE_FROM_SOURCE 命令发送给 Region " + targetRegionName + " 失败。");
+            System.err.println("[RegionManager] MIGRATE_TABLE_FAILURE.");
         }
-        return commandSent;
+    }
+
+    /**
+     * 处理 Master 发送的完整迁移命令。
+     * 格式: MIGRATE_TABLE_FROM_SOURCE <src_host> <src_port> <src_user> <src_pwd> <table_name> <dst_host> <dst_port> <dst_user> <dst_pwd>
+     */
+    private static boolean handleFullMigrateCommand(String command) {
+        String prefix = "MIGRATE_TABLE_FROM_SOURCE ";
+        if (!command.startsWith(prefix)) {
+            System.err.println("[RegionServer Process] MIGRATE_TABLE_FROM_SOURCE 命令格式错误 (前缀不匹配): " + command);
+            return false;
+        }
+        String params = command.substring(prefix.length());
+        String[] parts = params.split("\\s+"); // 按空格分割参数
+        if (parts.length != 9) {
+            System.err.println("[RegionServer Process] MIGRATE_TABLE_FROM_SOURCE 命令参数数量错误 (期望9个): " + params);
+            return false;
+        }
+        String srcHost = parts[0];
+        String srcPort = parts[1];
+        String srcUser = parts[2];
+        String srcPwd = parts[3];
+        String tableName = parts[4];
+        String dstHost = parts[5];
+        String dstPort = parts[6];
+        String dstUser = parts[7];
+        String dstPwd = parts[8];
+
+        System.out.println("[RegionServer Process] 收到完整迁移请求: 表 " + tableName + " 从源 " + srcHost + ":" + srcPort);
+
+        // 调用 ServerMaster.executeCompleteMigrationSteps
+        // 它会：1. dumpTable (从源拉取并导入本地) 2. 连接到源并删除源表
+        return executeCompleteMigrationSteps(
+                srcHost, srcPort, srcUser, srcPwd, // 源数据库连接信息
+                tableName,
+                dstHost, dstPort, dstUser, dstPwd
+        );
+    }
+
+    private static final String TARGET_DB_NAME = "lss"; // 目标数据库名
+
+    public static boolean copyTableBetweenMySQL(String srcHost, String srcPort, String srcUser, String srcPwd,
+                                                String tableName, String dstHost, String dstPort, String dstUser, String dstPwd) {
+        File tmpFile = null;
+        try {
+            tmpFile = File.createTempFile("mysqldump_", ".sql");
+
+            // mysqldump 命令，写入本地文件
+            List<String> dumpCmd = Arrays.asList(
+                    "mysqldump",
+                    "-h", srcHost,
+                    "-P", srcPort,
+                    "-u", srcUser,
+                    "-p" + srcPwd,
+                    "--single-transaction",
+                    "--skip-tz-utc",
+                    TARGET_DB_NAME,
+                    tableName,
+                    "--result-file=" + tmpFile.getAbsolutePath()
+            );
+
+            System.out.println("执行 mysqldump 命令: " + String.join(" ", dumpCmd));
+            ProcessBuilder dumpBuilder = new ProcessBuilder(dumpCmd);
+            dumpBuilder.redirectErrorStream(true);
+            Process dumpProcess = dumpBuilder.start();
+
+            // 打印 mysqldump 输出（方便调试）
+            printStreamAsync("mysqldump", dumpProcess.getInputStream());
+
+            int dumpExit = dumpProcess.waitFor();
+            if (dumpExit != 0) {
+                System.err.println("mysqldump 执行失败，退出码：" + dumpExit);
+                return false;
+            }
+
+            System.out.println("mysqldump 成功，文件路径：" + tmpFile.getAbsolutePath());
+
+            // mysql 导入命令，从文件导入
+            List<String> importCmd = Arrays.asList(
+                    "mysql",
+                    "-h", dstHost,
+                    "-P", dstPort,
+                    "-u", dstUser,
+                    "-p" + dstPwd,
+                    TARGET_DB_NAME,
+                    "-e", "source " + tmpFile.getAbsolutePath()
+            );
+
+            System.out.println("执行 mysql 导入命令: " + String.join(" ", importCmd));
+            ProcessBuilder importBuilder = new ProcessBuilder(importCmd);
+            importBuilder.redirectErrorStream(true);
+            Process importProcess = importBuilder.start();
+
+            //TODO:重命名
+            printStreamAsync("mysql", importProcess.getInputStream());
+
+            int importExit = importProcess.waitFor();
+            if (importExit != 0) {
+                System.err.println("mysql 导入失败，退出码：" + importExit);
+                return false;
+            }
+
+            System.out.println("✅ 成功将表 " + tableName + " 从 " + srcHost + " 复制到 " + dstHost);
+            return true;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            if (tmpFile != null && tmpFile.exists()) {
+                tmpFile.delete();
+            }
+        }
+    }
+
+    private static void printStreamAsync(String prefix, InputStream inputStream) {
+        new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("[" + prefix + "] " + line);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    /**
+     * (此方法在RegionServer端执行，由Master通过命令触发)
+     * 将数据表从src Server剪切一份表数据给 dst Region Server
+     * 注意：ZK元数据更新由Master负责。此方法只负责数据层面迁移。
+     */
+    public static boolean executeCompleteMigrationSteps(String srcHost, String srcPort,
+                                                        String srcUser, String srcPwd,
+                                                        String tableName,
+                                                        String dstHost, String dstPort,
+                                                        String dstUser, String dstPwd) {
+        System.out.println("[ServerMaster@"+ RegionServer.ip+"] 开始执行完整迁移步骤，表: " + tableName + " 从源: " + srcHost);
+
+        // 从src Server复制一份表数据给 dst Region Server
+        boolean dumpImportSuccess = copyTableBetweenMySQL(srcHost, srcPort, srcUser, srcPwd,
+                tableName, dstHost, dstPort, dstUser, dstPwd);
+
+        if (!dumpImportSuccess) {
+            System.err.println("[ServerMaster@"+RegionServer.ip+"] 完整迁移失败：数据复制步骤 (dumpTable) 失败，表: " + tableName);
+            return false;
+        }
+        System.out.println("[ServerMaster@"+RegionServer.ip+"] 完整迁移：数据复制成功，表: " + tableName);
+
+        // 步骤 2: 从源 RegionServer 的 MySQL 中删除表
+        System.out.println("[ServerMaster@"+RegionServer.ip+"] 完整迁移：尝试连接源 MySQL (" + srcHost + ":" + srcPort + ") 删除表 '" + tableName + "'...");
+        Connection sourceConn = null;
+        Statement sourceStmt = null;
+        try {
+            String sourceJdbcIpParam = srcPort.equals("3306") ? srcHost : (srcHost + ":" + srcPort);
+            sourceConn = JdbcUtils.getConnection(sourceJdbcIpParam, srcUser, srcPwd);
+
+            if (sourceConn != null) {
+                sourceStmt = sourceConn.createStatement();
+                sourceStmt.execute("USE " + TARGET_DB_NAME);
+                String dropSql = "DROP TABLE IF EXISTS `" + tableName + "`";
+                System.out.println("[ServerMaster@"+RegionServer.ip+"] 在源 (" + srcHost + ") 上执行: " + dropSql);
+                sourceStmt.executeUpdate(dropSql);
+                System.out.println("[ServerMaster@"+RegionServer.ip+"] 表 '" + tableName + "' 已成功从源 " + srcHost + " 的数据库中删除。");
+                return true; // 整个迁移步骤成功
+            } else {
+                System.err.println("[ServerMaster@"+RegionServer.ip+"] 完整迁移警告：无法连接到源 MySQL ("+ srcHost + ":" + srcPort +") 来删除表 '" + tableName + "'。数据已复制，但源表未删除。");
+                return false; // 标记为不完全成功
+            }
+        } catch (SQLException e) {
+            System.err.println("[ServerMaster@"+RegionServer.ip+"] 完整迁移错误：从源 MySQL 删除表 '" + tableName + "' 时出错: " + e.getMessage());
+            e.printStackTrace();
+            return false; // 标记为不完全成功
+        } finally {
+            JdbcUtils.releaseResc(null, sourceStmt, sourceConn);
+        }
     }
 
 
@@ -1005,9 +1282,5 @@ public class RegionManager {
             System.err.println("[RegionManager] Error getting connection info for region " + regionName + ": " + e.getMessage());
             return null;
         }
-    }
-    // Overload for simpler client connection string retrieval
-    private static String getRegionConnectionString(String regionName) {
-        return getRegionConnectionString(regionName, false);
     }
 }

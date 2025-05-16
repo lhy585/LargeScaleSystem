@@ -152,7 +152,7 @@ public class Client {
      */
     private void handleSqlCommand(String sqlCommand) {
         String commandType = "UNKNOWN";
-        boolean success = false;
+        boolean success;
         String resultData = null; // 用于 SELECT 结果
 
         try {
@@ -189,13 +189,6 @@ public class Client {
             } else if (trimmedCommand.startsWith("truncate")) {
                 commandType = "TRUNCATE";
                 success = ServerClient.executeCmd(sqlCommand);
-            } else if (trimmedCommand.startsWith("copy_table")) { // 处理自定义的 COPY_TABLE 命令
-                commandType = "COPY_TABLE";
-                success = handleCopyTableCommand(sqlCommand);
-            }
-            else if (trimmedCommand.startsWith("migrate_table_from_source ")) { // 注意末尾空格
-                commandType = "MIGRATE_TABLE_FROM_SOURCE";
-                success = handleFullMigrateCommand(sqlCommand); // 新的处理函数
             }
             else {
                 System.err.println("[RegionServer Process] 收到无法识别的命令结构: " + sqlCommand);
@@ -239,93 +232,6 @@ public class Client {
     }
 
     /**
-     * 处理 Master 发送的自定义 COPY_TABLE 命令.
-     * 格式: COPY_TABLE <source_host> <source_port> <source_user> <source_pwd> <source_table> <target_table>
-     * @param command 命令字符串
-     * @return 是否成功启动复制过程
-     */
-    private boolean handleCopyTableCommand(String command) {
-        String prefix = "COPY_TABLE ";
-        if (!command.startsWith(prefix)) {
-            return false;
-        }
-        String[] parts = command.substring(prefix.length()).split("\\s+");
-        if (parts.length != 6) {
-            System.err.println("[RegionServer Process] Invalid COPY_TABLE command format: " + command);
-            return false;
-        }
-        String sourceHost = parts[0];
-        String sourcePort = parts[2];
-        String sourceUser = parts[3];
-        String sourcePwd = parts[1];
-        String sourceTable = parts[4];
-        String targetTable = parts[5]; // 这是在本 RegionServer 上创建的表名
-
-        System.out.println("[RegionServer Process] Received request to copy table " + sourceTable + " from " + sourceHost + ":" + sourcePort + " to local table " + targetTable);
-        boolean copySuccess = ServerMaster.dumpTable(
-                sourceHost, // sourceRegionName (用于日志)
-                sourceHost, sourcePort, sourceUser, sourcePwd,
-                sourceTable,
-                RegionServer.mysqlUser, // 本地目标数据库用户名
-                RegionServer.mysqlPwd   // 本地目标数据库密码
-        );
-
-        if (copySuccess) {
-            System.out.println("[RegionServer Process] Table copy initiated successfully for " + targetTable);
-            // 在 ServerMaster.dumpTable 成功后，可以选择性地修改表名（如果需要）
-            if (!sourceTable.equals(targetTable)) {
-                System.out.println("[RegionServer Process] Renaming imported table " + sourceTable + " to " + targetTable);
-                String renameSql = "RENAME TABLE `" + sourceTable + "` TO `" + targetTable + "`;";
-                try {
-                    ServerClient.executeCmd(renameSql); // 使用本地执行
-                    System.out.println("[RegionServer Process] Table renamed successfully.");
-                } catch (Exception e) {
-                    System.err.println("[RegionServer Process] Failed to rename table after copy: " + e.getMessage());
-                    // 即使重命名失败，复制也可能部分成功，但返回 false 表示整个操作未完全成功
-                    return false;
-                }
-            }
-        } else {
-            System.err.println("[RegionServer Process] Table copy initiation failed for " + targetTable);
-        }
-        return copySuccess;
-    }
-
-    /**
-     * 处理 Master 发送的完整迁移命令。
-     * 格式: MIGRATE_TABLE_FROM_SOURCE <source_host_ip> <source_mysql_port> <source_mysql_user> <source_mysql_pwd> <table_name_to_migrate>
-     */
-    private boolean handleFullMigrateCommand(String command) {
-        String prefix = "MIGRATE_TABLE_FROM_SOURCE ";
-        if (!command.startsWith(prefix)) {
-            System.err.println("[RegionServer Process] MIGRATE_TABLE_FROM_SOURCE 命令格式错误 (前缀不匹配): " + command);
-            return false;
-        }
-        String params = command.substring(prefix.length());
-        String[] parts = params.split("\\s+"); // 按空格分割参数
-        if (parts.length != 5) {
-            System.err.println("[RegionServer Process] MIGRATE_TABLE_FROM_SOURCE 命令参数数量错误 (期望5个): " + params);
-            return false;
-        }
-        String sourceHost = parts[0];
-        String sourcePort = parts[1];
-        String sourceUser = parts[2];
-        String sourcePwd = parts[3];
-        String tableName = parts[4]; // 表在源和目标上名称相同
-
-        System.out.println("[RegionServer Process] 收到完整迁移请求: 表 " + tableName + " 从源 " + sourceHost + ":" + sourcePort);
-
-        // 调用 ServerMaster.executeCompleteMigrationSteps
-        // 它会：1. dumpTable (从源拉取并导入本地) 2. 连接到源并删除源表
-        return ServerMaster.executeCompleteMigrationSteps(
-                sourceHost, sourcePort, sourceUser, sourcePwd, // 源数据库连接信息
-                tableName,
-                RegionServer.mysqlUser, // 当前 RegionServer (目标) 的 MySQL 用户名
-                RegionServer.mysqlPwd   // 当前 RegionServer (目标) 的 MySQL 密码
-        );
-    }
-
-    /**
      * 向 Master 发送响应消息.
      *
      * @param response 要发送的消息字符串.
@@ -360,7 +266,7 @@ public class Client {
         } catch (IOException e) { /* 忽略 */ }
         try {
             if (masterSocket != null && !masterSocket.isClosed()) masterSocket.close();
-        } catch (IOException e) {  }
+        } catch (IOException ignored) {  }
         finally{ // 确保引用被清空
             writerToMaster = null;
             readerFromMaster = null;
