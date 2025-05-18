@@ -159,7 +159,8 @@ public class Master {
                                     } else if (res.containsKey(tableName) && res.get(tableName) == ResType.CREATE_TABLE_ALREADY_EXISTS) {
                                         output.println("Create Table " + tableName + " failed: Already exists.");
                                     } else {
-                                        output.println("Create Table " + tableName + " failed. Status: " + (res.get(tableName) != null ? res.get(tableName) : "UNKNOWN_ERROR"));
+                                        output.println("Create Table " + tableName + " failed. Status: " + (res.get(tableName) != null ?
+                                                res.get(tableName) : "UNKNOWN_ERROR"));
                                     }
                                 }
                                 break;
@@ -171,7 +172,8 @@ public class Master {
                                     } else if (res.containsKey(tableName) && res.get(tableName) == ResType.DROP_TABLE_NO_EXISTS){
                                         output.println("Drop Table " + tableName + " failed: Table does not exist.");
                                     } else {
-                                        output.println("Drop Table " + tableName + " failed. Status: " + (res.get(tableName) != null ? res.get(tableName) : "UNKNOWN_ERROR"));
+                                        output.println("Drop Table " + tableName + " failed. Status: " + (res.get(tableName) != null ?
+                                                res.get(tableName) : "UNKNOWN_ERROR"));
                                     }
                                 }
                                 break;

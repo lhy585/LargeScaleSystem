@@ -1,6 +1,11 @@
 package client;
 
 import master.SelectInfo;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.statement.Statement;
+import net.sf.jsqlparser.statement.drop.Drop;
+import net.sf.jsqlparser.util.TablesNamesFinder;
 
 import java.io.*;
 import java.net.Socket;
@@ -8,6 +13,7 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static master.RegionManager.MASTER_IP;
@@ -49,6 +55,16 @@ public class Client {
                         return;
                     }
                     String sql = sqlBuilder.toString().trim();
+                    Statement statement = CCJSqlParserUtil.parse(sql);
+                    if (statement instanceof Drop) {
+                        List<String> tableNames;
+                        TablesNamesFinder tablesNamesFinder = new TablesNamesFinder();
+                        tableNames = tablesNamesFinder.getTableList(statement);
+                        for(String i:tableNames){
+                            map.remove(i);
+                            map.remove(i+"_slave");
+                        }
+                    }
                     if (sql.isEmpty() || !sql.endsWith(";")) {
                         System.out.println("Invalid command or missing ';'");
                         continue;
@@ -166,6 +182,135 @@ public class Client {
                             } catch (IOException e) {
                                 System.err.println("Error communicating with RegionServer " + regionServerAddress + ": " + e.getMessage());
                                 map.remove(table_name);
+                                System.out.println("debug cache miss for " + table_name + ". Querying Master...");
+                                String regionServerAddress2 = null;
+                                String finalSqlForRs = null;
+
+                                try (Socket masterSocket = new Socket(masterIp, masterPort); // 使用外部类的静态 masterIp, masterPort
+                                     PrintWriter masterOut = new PrintWriter(new OutputStreamWriter(masterSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+                                     BufferedReader masterIn = new BufferedReader(new InputStreamReader(masterSocket.getInputStream(), StandardCharsets.UTF_8))) {
+                                    masterOut.println(sql); // 发送消息到服务器
+                                    System.out.println("debug Message sent to Master: " + sql);
+
+                                    String responseFromMaster = masterIn.readLine(); // 接收服务器的响应
+                                    System.out.println("debug Master response line: " + responseFromMaster);
+
+                                    if (responseFromMaster != null) {
+                                        SelectInfo info = new SelectInfo(responseFromMaster);
+                                        if (info.isValid) {
+                                            regionServerAddress = info.ip;
+                                            finalSqlForRs = info.sql;
+//                                        map.put(table_name, regionServerAddress);
+                                            System.out.println("debug Cached location for " + table_name + ": " + regionServerAddress);
+                                        } else {
+                                            System.out.println("Master reported table '" + table_name + "' not found or error processing SELECT.");
+                                        }
+                                    } else {
+                                        System.err.println("Error: No response from Master.");
+                                    }
+                                } catch (IOException e2) {
+                                    System.err.println("Error communicating with Master for SELECT lookup: " + e.getMessage());
+                                } catch (Exception e2) {
+                                    System.err.println("Error processing Master's SELECT response: " + e.getMessage());
+                                }
+
+                                if (regionServerAddress != null && finalSqlForRs != null) {
+                                    System.out.println("Master found table. RegionServer at: " + regionServerAddress);
+                                    System.out.println("Executing SQL on RegionServer: " + finalSqlForRs);
+                                    String table=extractTableNameFromSelect(finalSqlForRs);
+                                    System.out.println(finalSqlForRs);
+                                    System.out.println(table);
+                                    map.put(table,regionServerAddress);
+//                                String[] parts = regionServerAddress.split(":");
+//                                if (parts.length != 2) {
+//                                    System.err.println("Invalid RegionServer address format from Master: " + regionServerAddress);
+//                                    map.remove(table_name);
+//                                    continue;
+//                                }
+                                    String rsIp2 = regionServerAddress;
+                                    int rsPort2=4001;
+//                                try {
+//                                    rsPort = Integer.parseInt(parts[1]);
+//                                } catch (NumberFormatException e) {
+//                                    System.err.println("Invalid RegionServer port from Master: " + parts[1]);
+//                                    map.remove(table_name);
+//                                    continue;
+//                                }
+
+                                    System.out.println("Connecting to RegionServer " + rsIp2 + ":" + rsPort2 + " for SELECT...");
+                                    try (Socket rsSocket = new Socket(rsIp2, rsPort2);
+                                         PrintWriter rsOut = new PrintWriter(new OutputStreamWriter(rsSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+                                         BufferedReader rsIn = new BufferedReader(new InputStreamReader(rsSocket.getInputStream(), StandardCharsets.UTF_8))) {
+                                        rsOut.println(finalSqlForRs);
+                                        System.out.println("debug Message sent to RegionServer: " + finalSqlForRs);
+
+                                        System.out.println("--- RegionServer Response ---");
+                                        String responseLine;
+                                        ArrayList<String[]> dataList = new ArrayList<>();
+                                        boolean dataReceived = false;
+                                        // 读取数据行
+                                        while ((responseLine = rsIn.readLine()) != null) {
+                                            if ("END_OF_DATA".equals(responseLine)) {
+                                                break;
+                                            }
+                                            dataList.add(responseLine.split("\\s+"));
+                                            dataReceived = true;
+                                        }
+                                        int[] count = new int[dataList.get(0).length];
+                                        for (int i = 0; i < dataList.size(); i++) {
+                                            String[] temp = dataList.get(i);
+                                            for (int y=0;y< temp.length;y++) {
+                                                if (count[y] < temp[y].length()) {
+                                                    count[y] = temp[y].length();
+                                                }
+                                            }
+                                        }
+                                        for(int i=0;i<dataList.size();i++){
+                                            //
+                                            System.out.print("+");
+                                            for(int j=0;j<count.length;j++){
+                                                System.out.print("-");
+                                                for(int t=0;t<count[j];t++){
+                                                    System.out.print("-");
+                                                }
+                                                System.out.print("-");
+                                                System.out.print("+");
+                                            }
+                                            System.out.println();
+                                            //
+                                            System.out.print("|");
+                                            for(int j=0;j<count.length;j++){
+                                                System.out.print(" ");
+                                                System.out.print(dataList.get(i)[j]);
+                                                for(int t=0;t<count[j]-dataList.get(i)[j].length();t++){
+                                                    System.out.print(" ");
+                                                }
+                                                System.out.print(" ");
+                                                System.out.print("|");
+                                            }
+                                            System.out.println();
+                                        }
+                                        System.out.print("+");
+                                        for(int j=0;j<count.length;j++){
+                                            System.out.print("-");
+                                            for(int t=0;t<count[j];t++){
+                                                System.out.print("-");
+                                            }
+                                            System.out.print("-");
+                                            System.out.print("+");
+                                        }
+                                        System.out.println();
+                                        if (!dataReceived)
+                                            System.out.println("(No data rows received or connection closed prematurely)");
+                                        System.out.println("--- End of Response ---");
+                                    } catch (UnknownHostException e2) {
+                                        System.err.println("Error: Unknown RegionServer host: " + rsIp);
+                                        map.remove(table_name);
+                                    } catch (IOException e2) {
+                                        System.err.println("Error communicating with RegionServer " + regionServerAddress + ": " + e.getMessage());
+                                        map.remove(table_name);
+                                    }
+                                }
                             }
                         }else if(map.containsKey(table_name+"_slave")) {
                             //缓存中找到table_name+"_slave"
@@ -264,6 +409,136 @@ public class Client {
                             } catch (IOException e) {
                                 System.err.println("Error communicating with RegionServer " + regionServerAddress + ": " + e.getMessage());
                                 map.remove(table_name+"_slave");
+                                System.out.println("debug cache miss for " + table_name + "_slave. Querying Master...");
+                                String regionServerAddress1 = null;
+                                String finalSqlForRs = null;
+
+                                try (Socket masterSocket = new Socket(masterIp, masterPort); // 使用外部类的静态 masterIp, masterPort
+                                     PrintWriter masterOut = new PrintWriter(new OutputStreamWriter(masterSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+                                     BufferedReader masterIn = new BufferedReader(new InputStreamReader(masterSocket.getInputStream(), StandardCharsets.UTF_8))) {
+                                    sql=sql.replace(table_name,table_name+"_slave");
+                                    masterOut.println(sql); // 发送消息到服务器
+                                    System.out.println("debug Message sent to Master: " + sql);
+
+                                    String responseFromMaster = masterIn.readLine(); // 接收服务器的响应
+                                    System.out.println("debug Master response line: " + responseFromMaster);
+
+                                    if (responseFromMaster != null) {
+                                        SelectInfo info = new SelectInfo(responseFromMaster);
+                                        if (info.isValid) {
+                                            regionServerAddress = info.ip;
+                                            finalSqlForRs = info.sql;
+//                                        map.put(table_name, regionServerAddress);
+                                            System.out.println("debug Cached location for " + table_name + ": " + regionServerAddress);
+                                        } else {
+                                            System.out.println("Master reported table '" + table_name + "' not found or error processing SELECT.");
+                                        }
+                                    } else {
+                                        System.err.println("Error: No response from Master.");
+                                    }
+                                } catch (IOException e1) {
+                                    System.err.println("Error communicating with Master for SELECT lookup: " + e.getMessage());
+                                } catch (Exception e1) {
+                                    System.err.println("Error processing Master's SELECT response: " + e.getMessage());
+                                }
+
+                                if (regionServerAddress != null && finalSqlForRs != null) {
+                                    System.out.println("Master found table. RegionServer at: " + regionServerAddress);
+                                    System.out.println("Executing SQL on RegionServer: " + finalSqlForRs);
+                                    String table=extractTableNameFromSelect(finalSqlForRs);
+                                    System.out.println(finalSqlForRs);
+                                    System.out.println(table);
+                                    map.put(table,regionServerAddress);
+//                                String[] parts = regionServerAddress.split(":");
+//                                if (parts.length != 2) {
+//                                    System.err.println("Invalid RegionServer address format from Master: " + regionServerAddress);
+//                                    map.remove(table_name);
+//                                    continue;
+//                                }
+                                    String rsIp1 = regionServerAddress;
+                                    int rsPort1=4001;
+//                                try {
+//                                    rsPort = Integer.parseInt(parts[1]);
+//                                } catch (NumberFormatException e) {
+//                                    System.err.println("Invalid RegionServer port from Master: " + parts[1]);
+//                                    map.remove(table_name);
+//                                    continue;
+//                                }
+
+                                    System.out.println("Connecting to RegionServer " + rsIp1 + ":" + rsPort1 + " for SELECT...");
+                                    try (Socket rsSocket = new Socket(rsIp1, rsPort1);
+                                         PrintWriter rsOut = new PrintWriter(new OutputStreamWriter(rsSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+                                         BufferedReader rsIn = new BufferedReader(new InputStreamReader(rsSocket.getInputStream(), StandardCharsets.UTF_8))) {
+                                        rsOut.println(finalSqlForRs);
+                                        System.out.println("debug Message sent to RegionServer: " + finalSqlForRs);
+
+                                        System.out.println("--- RegionServer Response ---");
+                                        String responseLine;
+                                        ArrayList<String[]> dataList = new ArrayList<>();
+                                        boolean dataReceived = false;
+                                        // 读取数据行
+                                        while ((responseLine = rsIn.readLine()) != null) {
+                                            if ("END_OF_DATA".equals(responseLine)) {
+                                                break;
+                                            }
+                                            dataList.add(responseLine.split("\\s+"));
+                                            dataReceived = true;
+                                        }
+                                        int[] count = new int[dataList.get(0).length];
+                                        for (int i = 0; i < dataList.size(); i++) {
+                                            String[] temp = dataList.get(i);
+                                            for (int y=0;y< temp.length;y++) {
+                                                if (count[y] < temp[y].length()) {
+                                                    count[y] = temp[y].length();
+                                                }
+                                            }
+                                        }
+                                        for(int i=0;i<dataList.size();i++){
+                                            //
+                                            System.out.print("+");
+                                            for(int j=0;j<count.length;j++){
+                                                System.out.print("-");
+                                                for(int t=0;t<count[j];t++){
+                                                    System.out.print("-");
+                                                }
+                                                System.out.print("-");
+                                                System.out.print("+");
+                                            }
+                                            System.out.println();
+                                            //
+                                            System.out.print("|");
+                                            for(int j=0;j<count.length;j++){
+                                                System.out.print(" ");
+                                                System.out.print(dataList.get(i)[j]);
+                                                for(int t=0;t<count[j]-dataList.get(i)[j].length();t++){
+                                                    System.out.print(" ");
+                                                }
+                                                System.out.print(" ");
+                                                System.out.print("|");
+                                            }
+                                            System.out.println();
+                                        }
+                                        System.out.print("+");
+                                        for(int j=0;j<count.length;j++){
+                                            System.out.print("-");
+                                            for(int t=0;t<count[j];t++){
+                                                System.out.print("-");
+                                            }
+                                            System.out.print("-");
+                                            System.out.print("+");
+                                        }
+                                        System.out.println();
+                                        if (!dataReceived)
+                                            System.out.println("(No data rows received or connection closed prematurely)");
+                                        System.out.println("--- End of Response ---");
+                                    } catch (UnknownHostException e1) {
+                                        System.err.println("Error: Unknown RegionServer host: " + rsIp);
+                                        map.remove(table_name);
+                                    } catch (IOException e1) {
+                                        System.err.println("Error communicating with RegionServer " + regionServerAddress + ": " + e1.getMessage());
+                                        map.remove(table_name);
+                                    }
+                                }
                             }
                         }
                         else {
@@ -412,7 +687,6 @@ public class Client {
                             while ((responseLine = masterIn.readLine()) != null) {
                                 System.out.println(responseLine);
                             }
-
                             System.out.println("--- End of Response ---");
                         } catch (IOException e) {
                             System.err.println("Error communicating with Master: " + e.getMessage());
@@ -423,6 +697,8 @@ public class Client {
             } catch (IOException e) {
                 System.err.println("Error occurred while reading from console: " + e.getMessage());
                 e.printStackTrace();
+            } catch (JSQLParserException e) {
+                throw new RuntimeException(e);
             } finally {
                 System.out.println("Communication thread finished.");
             }

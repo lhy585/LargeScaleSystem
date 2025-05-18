@@ -1,14 +1,15 @@
 package regionserver;
 
+import zookeeper.TableInform;
+
 import java.io.*;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-
-import zookeeper.TableInform; // Keep if tables list is used, otherwise remove
 
 /**
  * Handles a single connection to the RegionServer's listening port.
@@ -33,8 +34,8 @@ public class ServerThread implements Runnable {
     public void run() {
         try {
             // Use UTF-8 for consistency
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
-            writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"));
+            reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
 
             // Assume connection is from a User Client sending SQL (likely SELECT)
             serveUserClient();
@@ -122,7 +123,7 @@ public class ServerThread implements Runnable {
                     row1.append("\t");
                 }
             }
-            writer.write(row1.toString() + "\n"); // Send one row per line
+            writer.write(row1 + "\n"); // Send one row per line
             // Send data rows
             int rowCount = 1;
             while (rs.next()) {
@@ -135,7 +136,7 @@ public class ServerThread implements Runnable {
                         row.append("\t"); // Use a clear delimiter (e.g., tab)
                     }
                 }
-                writer.write(row.toString() + "\n"); // Send one row per line
+                writer.write(row + "\n"); // Send one row per line
                 rowCount++;
             }
             // Send an end-of-data marker
@@ -144,6 +145,9 @@ public class ServerThread implements Runnable {
             System.out.println("[ServerThread " + Thread.currentThread().getId() + "] Sent " + rowCount + " rows for query.");
 
         } catch (SQLException e) {
+            writer.write("the table does not exist");
+            writer.write("END_OF_DATA\n");
+            writer.flush();
             System.err.println("[ServerThread " + Thread.currentThread().getId() + "] SQLException executing SELECT: " + e.getMessage());
             // Inform the client about the error
             reactCmd(false, "ERROR executing query: " + e.getMessage());

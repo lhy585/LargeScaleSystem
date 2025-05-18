@@ -70,7 +70,8 @@ public class RegionManager {
                         zooKeeperUtils.setWatch(dataPath); // Watch for data changes
                     }
                 } catch (Exception e) {
-                    System.err.println("[RegionManager] Warning: Failed to set initial watch on existing region: " + regionName + " - " + e.getMessage());
+                    System.err.println("[RegionManager] Warning: Failed to set initial watch on existing region: " +
+                            regionName + " - " + e.getMessage());
                 }
             }
         }
@@ -406,7 +407,6 @@ public class RegionManager {
 
     /**
      * 创建新表，同时在不同的region server上创建一份副本
-     *
      */
     public static List<ResType> createTableMasterAndSlave(String tableName,String sql) {
         List<ResType> checkList = findTableMasterAndSlave(tableName);
@@ -863,7 +863,8 @@ public class RegionManager {
 
             // 如果没找到或 handler 未运行，并且还未达到最大重试次数
             if (attempt < maxRetries) {
-                System.out.println("[RegionManager] Handler for region " + regionName + " not found/ready (attempt " + attempt + "/" + maxRetries + "). Retrying in " + retryDelayMs + "ms...");
+                System.out.println("[RegionManager] Handler for region " + regionName + " not found/ready (attempt "
+                        + attempt + "/" + maxRetries + "). Retrying in " + retryDelayMs + "ms...");
                 try {
                     Thread.sleep(retryDelayMs); // 等待一段时间
                 } catch (InterruptedException e) {
@@ -876,7 +877,8 @@ public class RegionManager {
 
         // 经过重试后，再次检查 handler
         if (handler == null || !handler.isRunning()) {
-            System.err.println("[RegionManager] Cannot send command: No active handler found for region " + regionName + " after " + maxRetries + " attempts.");
+            System.err.println("[RegionManager] Cannot send command: No active handler found for region " + regionName
+                    + " after " + maxRetries + " attempts.");
             return false;
         }
 
