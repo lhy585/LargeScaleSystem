@@ -3,9 +3,9 @@ import master.RegionManager;
 public class App {
     public static void main(String [] args){
         try{
-            RegionManager.copyTable("10.193.103.92","10.193.18.99","test1","test1_slave");
-//            ServerMaster.copyTableBetweenMySQL("10.193.103.92","3306","root","123456","test",
-//                    "10.162.19.110","3306","root","429915");
+            //RegionManager.copyTable("10.193.103.92","10.192.192.120","test1","test1_slave");
+            RegionManager.copyTableBetweenMySQL("10.193.103.92","3306","root","123456","test1",
+                    "10.192.192.120","3306","root","111111");
 //            System.out.println(zookeeper.getData("/lss/master/ip"));
 //            TableInform tableInform=new TableInform("table1",0);
 //            TableInform tableInform2=new TableInform("table2",0);

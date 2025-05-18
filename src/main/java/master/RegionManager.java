@@ -144,18 +144,11 @@ public class RegionManager {
         regionsInfo = sortedRegionsInfo;
         regionsLoad = getRegionsLoad();
         loadsSum = getLoadsSum();
-        regularRecoverData();
-        sortedRegionsInfo = new LinkedHashMap<>();
-        for(String regionName : regionsInfo.keySet()){
-            sortedRegionsInfo.put(regionName, sortLoadDsc(regionsInfo.get(regionName)));
-        }
-        regionsInfo = sortedRegionsInfo;
-        regionsLoad = getRegionsLoad();
-        loadsSum = getLoadsSum();
     }
 
-    private static void regularRecoverData(){
-        for(String tableName : toBeCopiedTable){
+    private static void recoverData(){
+        List<String> temp = new ArrayList<>(toBeCopiedTable);
+        for(String tableName : temp){
             String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
             String slaveTableName = masterTableName + "_slave";
             List<ResType> checkList = findTableMasterAndSlave(masterTableName);
@@ -177,11 +170,12 @@ public class RegionManager {
         String templateRegionName = zooKeeperManager.getRegionServer(templateTableName);
         Integer load = regionsInfo.get(templateRegionName).get(templateTableName);
         //新建
-        String addRegionName = getLeastRegionName(templateTableName, false);
+        String addRegionName = getLeastRegionName(templateTableName);
         if(addRegionName == null){
             return false;
         }
-        regionsInfo.get(addRegionName).put(addTableName, load);
+        Map<String, Integer> tableInfos = regionsInfo.get(addRegionName);
+        tableInfos.put(addTableName, load);
         //通知ZooKeeper
         zooKeeperManager.addTable(addRegionName, new TableInform(addTableName,load));
         sortAndUpdate();
@@ -229,14 +223,9 @@ public class RegionManager {
      * @return 如果有节点，则返回最小节点对应的名字；如果没有节点，返回null
      * --测试通过--
      */
-    public static String getLeastRegionName(String tableName){
-        return getLeastRegionName(tableName, true);
-    }
 
-    public static String getLeastRegionName(String tableName, boolean isUpdate) {
-        if(isUpdate){
-            sortAndUpdate();
-        }
+    public static String getLeastRegionName(String tableName) {
+        sortAndUpdate();
         String masterTableName = tableName.endsWith("_slave") ? tableName.substring(0, tableName.length() - 6) : tableName;
         String slaveTableName = masterTableName + "_slave";
 
@@ -356,6 +345,7 @@ public class RegionManager {
         }
         regionsInfo.put(addRegionName, addTablesInfo);
         sortAndUpdate();
+        recoverData();
         return ResType.ADD_REGION_SUCCESS;
     }
 

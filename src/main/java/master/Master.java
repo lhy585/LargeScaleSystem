@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Master {
@@ -75,7 +74,7 @@ public class Master {
                     Socket regionSocket = null;
                     RegionServerHandler handler = null;
                     String connectionIp = null; // Socket 连接看到的 IP
-                    String reportedZkIp = null; // RegionServer 报告的、在ZK中注册的IP
+                    String reportedZkIp; // RegionServer 报告的、在ZK中注册的IP
 
                     try {
                         regionSocket = serverSocket.accept();
@@ -92,14 +91,16 @@ public class Master {
                             // 注册成功后再启动Handler的主线程
                             handler.startHandlerThread(reportedZkIp);
                         } else {
-                            System.err.println("[Master Listener] Registration failed for connection from " + connectionIp + ". Closing socket.");
+                            System.err.println("[Master Listener] Registration failed for connection from "
+                                    + connectionIp + ". Closing socket.");
                             if (regionSocket != null && !regionSocket.isClosed()) {
                                 try { regionSocket.close(); } catch (IOException ce) { /* ignore */ }
                             }
                             if (handler != null) handler.closeConnection();
                         }
                     } catch (IOException e) {
-                        System.err.println("[Master Listener] Error handling incoming RegionServer connection from " + connectionIp + ": " + e.getMessage());
+                        System.err.println("[Master Listener] Error handling incoming RegionServer connection from "
+                                + connectionIp + ": " + e.getMessage());
                         if (regionSocket != null && !regionSocket.isClosed()) {
                             try { regionSocket.close(); } catch (IOException ce) { /* ignore */ }
                         }
@@ -114,18 +115,6 @@ public class Master {
 
         public RegionServerHandler getRegionServerHandler(String zkIp) {
             return regionHandlers.get(zkIp);
-        }
-
-        public void removeRegionServer(String zkIp) {
-            RegionServerHandler handler = regionHandlers.remove(zkIp);
-            if (handler != null) {
-                handler.closeConnection();
-                System.out.println("[Master Listener] Removed handler for ZK IP: " + zkIp);
-            }
-        }
-
-        public Set<String> getAllRegionServerIds() {
-            return regionHandlers.keySet();
         }
     }
 
@@ -147,9 +136,8 @@ public class Master {
             System.out.println("[Info] New client connected: " + socket.getInetAddress() + ":" + socket.getPort());
 
             try {
-                String sql = input.readLine();
-
-                if (sql == null || sql.trim().isEmpty()) {
+                String sql = input.readLine().replaceAll("(?i)_slave", "");
+                if (sql.trim().isEmpty()) {
                     System.out.println("[Master-ClientHandler] Client disconnected or sent empty command.");
                 } else {
                     sqlSocket.parseSql(sql); //处理字符串 (日志在 Master 控制台)
@@ -234,8 +222,8 @@ public class Master {
             } catch (Exception e) {
                 System.err.println("[Error] ClientHandler unexpected exception for " + socket.getRemoteSocketAddress() + ": " + e.getMessage());
                 e.printStackTrace();
-                if (output != null && isSocketAlive(socket)) {
-                    output.println("ERROR: Internal server error while processing your request.");
+                if (!isSocketAlive(socket)) {
+                    System.out.println("ERROR: Internal server error while processing your request.");
                 }
             } finally {
                 // System.out.println("[Info] Closing connection for client: " + socket.getRemoteSocketAddress());
